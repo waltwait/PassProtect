@@ -2,6 +2,7 @@ package com.hintvault.crypto
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SecretsTest {
@@ -56,5 +57,18 @@ class SecretsTest {
         // 舊實作在此長度會反覆擴充緩衝區；新實作單次完成。
         val text = "提示".repeat(64)
         assertArrayEquals(text.toByteArray(Charsets.UTF_8), text.toCharArray().toUtf8Bytes())
+    }
+
+    @Test
+    fun toUtf8BytesReplacesLoneSurrogateInsteadOfTruncating() {
+        // 落單的代理字元是畸形 UTF-16。低階 encoder 預設 REPORT 會靜默截斷，
+        // 導致提示內容被無聲損毀；設為 REPLACE 以符合 String.toByteArray 的行為。
+        val chars = charArrayOf('a', '\uD800', 'b')   // 高位代理字元後面沒有低位
+        val expected = String(chars).toByteArray(Charsets.UTF_8)
+
+        val actual = chars.toUtf8Bytes()
+
+        assertArrayEquals(expected, actual)
+        assertTrue("不可截斷", actual.size > 2)
     }
 }
