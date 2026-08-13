@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets
 fun ByteArray.wipe() = fill(0)
 
 /** 以 NUL 覆寫。用於主密碼。 */
-fun CharArray.wipe() = fill(' ')
+fun CharArray.wipe() = fill('\u0000')
 
 /** 執行 [block] 後必定歸零，即使 [block] 擲出例外。 */
 fun <R> ByteArray.useThenWipe(block: (ByteArray) -> R): R =

@@ -17,7 +17,7 @@ class SecretsTest {
     fun wipeZeroesCharArray() {
         val chars = charArrayOf('a', 'b', 'c')
         chars.wipe()
-        assertArrayEquals(charArrayOf(' ', ' ', ' '), chars)
+        assertArrayEquals(charArrayOf('\u0000', '\u0000', '\u0000'), chars)
     }
 
     @Test
