@@ -86,7 +86,7 @@ implementation("org.linguafranca.pwdb:KeePassJava2-kdbx:2.2.4") {
 ## 3. 模組邊界
 
 ```
-crypto/     金鑰的一切。Argon2id 導出、Keystore 金鑰包裝/解包、生體辨識綁定。
+crypto/     金鑰的一切。Argon2d 導出、Keystore 金鑰包裝/解包、生體辨識綁定。
             不認識 KDBX，不認識 UI。輸入密碼，輸出金鑰位元組。
 
 vault/      KDBX 讀寫 + 領域模型 Entry。
@@ -107,7 +107,7 @@ ui/         Compose 畫面。
 ### 4.1 金鑰階層
 
 ```
-主密碼 ──Argon2id──→ vault key ──→ 解密 KDBX
+主密碼 ──Argon2d──→ vault key ──→ 解密 KDBX
                           │
                           └──AES-256-GCM──→ wrapped key（存 app 私有目錄）
                                   ↑
@@ -265,7 +265,7 @@ hist.2.hint  = 更舊的提示：第一台電腦型號
 ## 8. 測試策略
 
 **單元測試**（不需裝置）
-- Argon2id 導出：以已知測試向量驗證
+- Argon2d 導出：以已知測試向量驗證
 - KDBX 讀寫來回：以固定 fixture 檔驗證解析與序列化
 - 衝突偵測邏輯：以假的 storage 實作驗證各種 mtime / hash 組合
 
