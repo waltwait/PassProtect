@@ -43,4 +43,18 @@ class SecretsTest {
         val chars = "提示".toCharArray()
         assertArrayEquals("提示".toByteArray(Charsets.UTF_8), chars.toUtf8Bytes())
     }
+
+    @Test
+    fun toUtf8BytesHandlesSurrogatePairs() {
+        // 代理對：2 chars → 4 bytes。size*3 的配置必須足夠。
+        val chars = "🔐".toCharArray()
+        assertArrayEquals("🔐".toByteArray(Charsets.UTF_8), chars.toUtf8Bytes())
+    }
+
+    @Test
+    fun toUtf8BytesHandlesLongCjkInputWithoutTruncation() {
+        // 舊實作在此長度會反覆擴充緩衝區；新實作單次完成。
+        val text = "提示".repeat(64)
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), text.toCharArray().toUtf8Bytes())
+    }
 }
