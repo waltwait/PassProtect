@@ -369,6 +369,7 @@ package com.hintvault.crypto
 
 import java.nio.ByteBuffer
 import java.nio.CharBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 /** 以 0 覆寫。用於金鑰與其他機密位元組。 */
@@ -398,10 +399,17 @@ fun <R> CharArray.useThenWipe(block: (CharArray) -> R): R =
  * 因此改為預先配置足夠大的緩衝區單次編碼：UTF-8 每個 BMP 字元最多 3 bytes，
  * 代理對為 2 chars → 4 bytes，故 `size * 3` 永遠足夠，不會觸發擴充。
  * 緩衝區由我們自己配置，因此清得掉。
+ *
+ * 錯誤處理明確設為 `REPLACE`：低階 `CharsetEncoder` 預設為 `REPORT`，遇到
+ * 落單的代理字元會**靜默截斷**而不擲出例外，提示內容會被無聲損毀。
+ * `String.toByteArray()` 走的是 `REPLACE`，測試也以它為基準比對，
+ * 明確設定可讓本函式成為其等價替代。
  */
 fun CharArray.toUtf8Bytes(): ByteArray {
     val out = ByteBuffer.allocate(size * 3)
     val encoder = StandardCharsets.UTF_8.newEncoder()
+        .onMalformedInput(CodingErrorAction.REPLACE)
+        .onUnmappableCharacter(CodingErrorAction.REPLACE)
     encoder.encode(CharBuffer.wrap(this), out, true)
     encoder.flush(out)
 
