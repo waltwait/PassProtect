@@ -36,7 +36,27 @@
 - **minSdk**：29（Android 10）— scoped storage 自此為常態，SAF 行為一致，省去版本分支
 - **targetSdk**：最新穩定版
 - **儲存格式**：KDBX 4（KeePass 格式），相容 KeePassXC / KeePassDX
+- **KDBX 函式庫**：`org.linguafranca.pwdb:KeePassJava2-dom:2.2.4`（Apache-2.0）
 - **架構**：單一 Gradle module，內部以 package 分層
+
+### 為何選 DOM 模組而非 Jackson
+
+函式庫作者在 readme 中將 Jackson 模組列為「未來主力」，但 **Jackson 模組不可用於 Android**：它依賴 `jackson-dataformat-xml` + `woodstox-core`，兩者建立在 StAX（`javax.xml.stream`）之上，而 Android 平台不提供 StAX。
+
+DOM 模組是 readme 中唯一明確標示「Known to work on Android」者，且僅使用 `javax.xml.parsers` / `javax.xml.transform` / `javax.xml.xpath`——這些 Android 皆有內建。代價是解析效能較差，但本 app 的資料量（數百筆提示）下無實質差異。
+
+### 必要的 Gradle 排除項
+
+`util` 模組會傳遞引入兩個不該進入 Android runtime 的依賴，須排除：
+
+```kotlin
+implementation("org.linguafranca.pwdb:KeePassJava2-dom:2.2.4") {
+    exclude(group = "ch.qos.logback")   // 不支援 Android
+    exclude(group = "junit")            // 測試函式庫不應進入 runtime
+}
+```
+
+日誌改用 slf4j 的 Android 綁定或 no-op 實作。
 
 ## 3. 模組邊界
 
@@ -74,9 +94,24 @@ ui/         Compose 畫面。
 ### 4.2 KDF
 
 - **Argon2id**，參數由 KDBX header 決定（開啟既有檔）
-- 建立新資料庫時的預設：memory 64 MiB、iterations 4、parallelism 2
-- 建立時實測一次耗時，若超過 2 秒則向下調整並告知使用者
-- 實作走 JNI 原生函式庫（純 JVM 實作在行動裝置上過慢）
+- 實作為 BouncyCastle 的**純 Java** Argon2（由 KeePassJava2 內建，非 JNI）
+
+**實測數據**（2026-08-13，於開發用 Mac，JDK 25）：
+
+| 參數 | 耗時 |
+|---|---|
+| M=16 MiB, I=2 | 292 ms |
+| M=32 MiB, I=2 | 614 ms |
+| M=64 MiB, I=2 | 1282 ms |
+| M=64 MiB, I=4 | 2536 ms |
+
+行動裝置通常較開發機慢 3–6 倍，故原訂的 64 MiB / I=4 在手機上約需 8–15 秒，不可接受。
+
+**建立新資料庫的預設值改為：memory 32 MiB、iterations 2、parallelism 2**（手機上推估 2–4 秒）。建立時實際量測，若超過 3 秒則自動下調並告知使用者。
+
+**緩解因素**：因採用生體辨識快速解鎖（§4.4），Argon2 僅在首次解鎖與重開機後執行，日常開啟不經過 KDF。故此處可接受數秒的成本。
+
+**未來最佳化（非 v1 範圍）**：`KeyDerivationFunction` 是介面，可實作一個委派給原生 Argon2（如 Argon2Kt，MIT 授權）的版本以大幅加速。需先確認載入路徑是否以 UUID 從固定登錄表解析 KDF；若是，則需要額外處理。
 
 ### 4.3 KDBX 加密
 
@@ -117,14 +152,35 @@ Keystore 金鑰規格：
 ```kotlin
 Entry(
     id: UUID,
-    title: String,        // 哪個服務
-    hint: String,         // 提示內容
-    modifiedAt: Instant,
-    history: List<HistoricalHint>   // KDBX 原生 entry history
+    title: String,        // 哪個服務 → KDBX Title
+    hint: String,         // 提示內容 → KDBX Password（受 inner stream 保護）
+    modifiedAt: Instant,  // → KDBX Times/LastModificationTime
+    history: List<HistoricalHint>   // → KDBX 自訂字串欄位，見下
 )
 ```
 
 刻意不設獨立的「帳號」欄位——若有需要寫入標題即可。歷史記錄的用途：改了密碼並更新提示後，若某裝置仍為舊密碼，舊提示可救援。
+
+提示存入 KDBX 的 **Password 欄位**而非 Notes，因為 Password 是 KDBX 預設受 inner stream 保護的欄位。
+
+### 歷史記錄的實作方式（重要：與原設計不同）
+
+KDBX 格式本身有原生的 `<History>` 元素，但 **KeePassJava2 並未實作**——`HISTORY_ELEMENT_NAME` 常數在原始碼中僅有宣告、無任何使用處，公開 API 也不提供存取。底層的 `Element` 為 package-private，無法從外部操作真正的 History 節點。
+
+因此歷史改以 **KDBX 自訂字串欄位**實作：
+
+```
+hist.1.at    = 2026-01-04T10:00:00Z
+hist.1.hint  = 舊提示：國中同學的綽號
+hist.2.at    = 2026-06-20T08:30:00Z
+hist.2.hint  = 更舊的提示：第一台電腦型號
+```
+
+已實測驗證：自訂欄位可正確寫入、讀回，且在載入後修改並重新存檔時不會遺失既有欄位。
+
+**取捨**：KeePassXC 會將這些顯示為 entry 的「額外屬性」，而非其原生的 History 分頁。功能不受影響，但呈現方式不如原生整合。
+
+**注意**：自訂欄位預設不受 inner stream 保護（實測 `shouldProtect("hist.1.hint")` 回傳 false）。此僅影響已加密容器*內部*的 XML 層混淆，不影響靜態加密強度。若要一併保護，可繼承 `DomDatabaseWrapper` 並覆寫 `shouldProtect(String)`。
 
 ### 5.2 檔案存取
 
@@ -181,16 +237,36 @@ Entry(
 - KeePassXC 建立的資料庫，需能於本 app 正常開啟
 - 此測試若不通過，KDBX 相容性的整個立論即不成立
 
-## 9. 主要風險
+## 9. Spike 結果（2026-08-13）
 
-**KDBX 函式庫的 Android 相容性 —— 最高風險，須最先驗證。**
+於 JVM（JDK 25）以 Gradle 專案實測 `KeePassJava2-dom:2.2.4`。
 
-候選為 KeePassJava2（純 Java，jorabin/KeePassJava2）。風險在於該函式庫可能依賴 Android 不支援或需 desugaring 的 JVM 元件（如 XML binding、java.time、NIO 特性）。Argon2 亦需另尋 Android 可用的 JNI 綁定。
+### 已驗證通過
 
-**緩解**：實作的第一步即為 spike——在最小 Android 專案中，實際以該函式庫開啟一個 KeePassXC 產生的 kdbx 檔。若失敗，備案依序為：
+| 項目 | 結果 |
+|---|---|
+| KDBX 4 檔頭寫出 | PASS（簽章 `03D9A29A 67FB4BB5`，版本 4.0） |
+| Argon2 + AES-256 加解密 | PASS |
+| 中文 UTF-8 內容來回 | PASS |
+| 錯誤密碼遭拒 | PASS（擲出 `IllegalStateException`） |
+| 自訂字串欄位來回 | PASS |
+| 修改後重新存檔保留既有欄位 | PASS |
 
-1. 改用 KeePassDX 的 database 模組（GPL-3.0，須留意授權傳染性）
-2. 自行實作 KDBX4 的必要子集
-3. 回頭重新評估「自訂格式」方案（原討論中的選項 B）
+### 依賴分析
 
-此 spike 的結果會實質影響後續工作量，應在撰寫完整實作計畫前完成。
+依賴樹對 Android 友善：guava 為 **`32.1.2-android`** 版本、BouncyCastle 可用於 Android、XML 僅用到 `javax.xml.parsers` / `transform` / `xpath`（Android 皆內建）、`java.time` 於 minSdk 29 原生支援。DOM 路徑**不含** StAX。
+
+須排除 `logback-classic` 與 `junit`（見 §2）。
+
+### 因 spike 而變更的設計
+
+1. 採 **DOM** 模組而非 Jackson（Jackson 需 StAX，Android 無）
+2. 歷史記錄改以自訂字串欄位實作（函式庫未實作原生 History）
+3. Argon2 預設參數自 64 MiB / I=4 下修為 32 MiB / I=2（純 Java 實作偏慢）
+
+## 10. 尚未驗證的項目
+
+以下兩項無法在目前環境完成，須在實作階段補上：
+
+1. **Android runtime（ART）實際行為** — 本機 `~/Library/Android/sdk` 為空，Android SDK 未安裝。JVM 通過不保證 dex 後在 ART 上通過（尤其 `javax.xml.xpath` 在 Android 上的完整度）。
+2. **KeePassXC 互通性** — 本機未安裝 KeePassXC。§8 所列的跨工具驗收測試尚未執行。此為 KDBX 決策的核心立論，必須驗證。
