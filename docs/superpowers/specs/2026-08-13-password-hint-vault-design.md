@@ -36,7 +36,7 @@
 - **minSdk**：29（Android 10）— scoped storage 自此為常態，SAF 行為一致，省去版本分支
 - **targetSdk**：最新穩定版
 - **儲存格式**：KDBX 4（KeePass 格式），相容 KeePassXC / KeePassDX
-- **KDBX 函式庫**：`org.linguafranca.pwdb:KeePassJava2-dom:2.2.4`（Apache-2.0）
+- **KDBX 函式庫**：`org.linguafranca.pwdb:KeePassJava2-kdbx:2.2.4`（Apache-2.0），**外加自行 vendor 並修補的 `dom` 模組**（見 §2.3）
 - **架構**：單一 Gradle module，內部以 package 分層
 
 ### 為何選 DOM 模組而非 Jackson
@@ -45,12 +45,37 @@
 
 DOM 模組是 readme 中唯一明確標示「Known to work on Android」者，且僅使用 `javax.xml.parsers` / `javax.xml.transform` / `javax.xml.xpath`——這些 Android 皆有內建。代價是解析效能較差，但本 app 的資料量（數百筆提示）下無實質差異。
 
-### 必要的 Gradle 排除項
+### 2.3 dom 模組必須 vendor 並修補（實機驗證後的結論）
+
+上游 `DomSerializableDatabase.save()` 有一行：
+
+```java
+Document copyDoc = (Document) doc.cloneNode(true);
+```
+
+Android 的 Harmony DOM **拒絕複製 Document 節點**，在真機上擲出：
+
+```
+org.w3c.dom.DOMException: Cannot copy node of type 9
+```
+
+亦即上游 readme 標示的「Known to work on Android」僅對**讀取**成立，**寫入在 Android 上完全不能用**。已於 Galaxy S25 / Android 16 實測確認。
+
+**修法**：建立新 Document 並 `importNode` 根元素。已在真機驗證此法可深拷貝、與原文件獨立、且能正常序列化。
+
+由於 `DomDatabaseWrapper` 以 `private final` 寫死 `DomSerializableDatabase`，無注入接縫，無法以繼承替換；而同名類別若同時存在於 app 與 jar 會造成 dex 重複類別錯誤。故採用：
+
+- 只依賴 `KeePassJava2-kdbx`（容器與加密，完全不修改）
+- 將 `dom` 模組的 6 個檔（共 1249 行，Apache-2.0，全為 public 類別）納入專案原始碼，僅修改上述一行
+
+修補處須保留上游版權標頭並加註說明。此修正應同時回報上游。
+
+### 2.4 必要的 Gradle 排除項
 
 `util` 模組會傳遞引入兩個不該進入 Android runtime 的依賴，須排除：
 
 ```kotlin
-implementation("org.linguafranca.pwdb:KeePassJava2-dom:2.2.4") {
+implementation("org.linguafranca.pwdb:KeePassJava2-kdbx:2.2.4") {
     exclude(group = "ch.qos.logback")   // 不支援 Android
     exclude(group = "junit")            // 測試函式庫不應進入 runtime
 }
@@ -93,25 +118,42 @@ ui/         Compose 畫面。
 
 ### 4.2 KDF
 
-- **Argon2id**，參數由 KDBX header 決定（開啟既有檔）
-- 實作為 BouncyCastle 的**純 Java** Argon2（由 KeePassJava2 內建，非 JNI）
+參數由 KDBX header 決定（開啟既有檔）。實作為 BouncyCastle 的**純 Java** Argon2（KeePassJava2 內建，非 JNI）。
 
-**實測數據**（2026-08-13，於開發用 Mac，JDK 25）：
+#### 是 Argon2d，不是 Argon2id
+
+原設計寫的是 Argon2id，但函式庫**只實作 Argon2d**：`Argon2.java` 寫死 `Argon2Parameters.ARGON2_d`，且註冊於 Argon2d 的 UUID `EF636DDF-…`。
+
+Argon2d 為資料相依（data-dependent），理論上較易受旁通道分析；Argon2id 是混合式，為現行建議值。但 Argon2d 仍是 KeePass 原始預設、且為記憶體困難函式，對「手機本機的提示保險庫」此一威脅模型可接受。
+
+**連帶風險**：KDF 登錄表是 Java `enum`（`Encryption.KeyDerivationFunction`），無法擴充，`getKdf(UUID)` 遇到未知 UUID 直接擲出例外。因此**若資料庫改用 Argon2id，本 app 將無法開啟**。由於資料庫由本 app 建立，預設不會發生；但須在文件中警告使用者不要在 KeePassXC 中把 KDF 改成 Argon2id。
+
+#### 實機實測（Galaxy S25 / Android 16 / arm64，2026-08-13）
+
+直接呼叫 KDF：
 
 | 參數 | 耗時 |
 |---|---|
-| M=16 MiB, I=2 | 292 ms |
-| M=32 MiB, I=2 | 614 ms |
-| M=64 MiB, I=2 | 1282 ms |
-| M=64 MiB, I=4 | 2536 ms |
+| M=16 MiB, I=2 | 361 ms |
+| M=32 MiB, I=2 | 542 ms |
+| M=64 MiB, I=2 | 1712 ms |
+| M=128 MiB, I=4 | 5936 ms |
 
-行動裝置通常較開發機慢 3–6 倍，故原訂的 64 MiB / I=4 在手機上約需 8–15 秒，不可接受。
+**但實際存/取檔的耗時是上表的兩倍以上**，因為 `KdbxHeader.getTransformedKeyDigest()` **無任何快取**，而載入與儲存路徑各會呼叫它 2–3 次（`getHmacKey`、`createDecryptedStream`、`createEncryptedStream`）。端到端實測：
 
-**建立新資料庫的預設值改為：memory 32 MiB、iterations 2、parallelism 2**（手機上推估 2–4 秒）。建立時實際量測，若超過 3 秒則自動下調並告知使用者。
+| 參數 | 實際存檔耗時 |
+|---|---|
+| M=16 MiB, I=2 | 1126 ms |
+| **M=32 MiB, I=2** | **2241 ms** |
+| M=64 MiB, I=2 | 3506 ms |
 
-**緩解因素**：因採用生體辨識快速解鎖（§4.4），Argon2 僅在首次解鎖與重開機後執行，日常開啟不經過 KDF。故此處可接受數秒的成本。
+#### 決定
 
-**未來最佳化（非 v1 範圍）**：`KeyDerivationFunction` 是介面，可實作一個委派給原生 Argon2（如 Argon2Kt，MIT 授權）的版本以大幅加速。需先確認載入路徑是否以 UUID 從固定登錄表解析 KDF；若是，則需要額外處理。
+**建立新資料庫的預設值：memory 32 MiB、iterations 2、parallelism 2。** 於此旗艦機端到端約 2.2 秒；較慢的機器會更久，故建立資料庫時實際量測，超過 3 秒則自動下調並告知使用者。
+
+**緩解因素**：因採用生體辨識快速解鎖（§4.4），Argon2 僅在首次解鎖與重開機後執行，日常開啟不經過 KDF。
+
+**未來最佳化（非 v1 範圍）**：在已 vendor 的程式碼中為 transformed key 加上快取，可直接砍半解鎖時間；此為比抽換原生 Argon2 更划算的第一步。
 
 ### 4.3 KDBX 加密
 
@@ -239,9 +281,10 @@ hist.2.hint  = 更舊的提示：第一台電腦型號
 
 ## 9. Spike 結果（2026-08-13）
 
-於 JVM（JDK 25）以 Gradle 專案實測 `KeePassJava2-dom:2.2.4`。
+於 JVM（JDK 25）與實體 Android 裝置上實測 `KeePassJava2` 2.2.4。spike 專案保留於
+[`spikes/android-kdbx/`](../../../spikes/android-kdbx/)，含修補後的 dom 模組與所有實機測試。
 
-### 已驗證通過
+### JVM 端已驗證通過
 
 | 項目 | 結果 |
 |---|---|
@@ -258,15 +301,48 @@ hist.2.hint  = 更舊的提示：第一台電腦型號
 
 須排除 `logback-classic` 與 `junit`（見 §2）。
 
+### KeePassXC 雙向互通（KeePassXC 2.7.12）
+
+| 方向 | 結果 |
+|---|---|
+| KeePassXC 開啟本函式庫產生的 KDBX4/Argon2d 檔 | PASS |
+| 自訂欄位在 KeePassXC 中可見（`show --all`） | PASS |
+| KeePassXC 修改該檔後，自訂欄位完整保留 | PASS |
+| 本函式庫開啟 KeePassXC 建立的檔（KDBX 3.1 / AES-KDF） | PASS |
+| 本函式庫讀回被 KeePassXC 修改過的檔 | PASS |
+
+KDBX 決策的核心立論（資料不會被本 app 鎖死）已雙向驗證成立。
+
+### 實機驗證（Galaxy S25，Android 16 / API 36，arm64-v8a）
+
+| 測試 | 結果 |
+|---|---|
+| KDBX4 建立 → 儲存 → 載入來回（含中文與自訂欄位） | PASS（套用 §2.3 修補後） |
+| 在裝置上讀取 KeePassXC 建立的資料庫 | PASS |
+| Keystore 金鑰：`setUserAuthenticationRequired` + `setInvalidatedByBiometricEnrollment` + `AUTH_BIOMETRIC_STRONG` | PASS |
+| **StrongBox 硬體支援** | **PASS（`strongbox_keystore=300`）** |
+
+§4.4 所列的 Keystore 設定在此硬體上完全被接受，且 StrongBox 可用，不需退回 TEE。
+
 ### 因 spike 而變更的設計
 
 1. 採 **DOM** 模組而非 Jackson（Jackson 需 StAX，Android 無）
-2. 歷史記錄改以自訂字串欄位實作（函式庫未實作原生 History）
-3. Argon2 預設參數自 64 MiB / I=4 下修為 32 MiB / I=2（純 Java 實作偏慢）
+2. dom 模組須 vendor 並修補 `cloneNode` 那一行（否則 Android 上無法寫入）
+3. 依賴改為 `KeePassJava2-kdbx` 而非 `-dom`（避免 dex 重複類別）
+4. 歷史記錄改以自訂字串欄位實作（函式庫未實作原生 History）
+5. Argon2 預設參數自 64 MiB / I=4 下修為 32 MiB / I=2
+6. KDF 實為 **Argon2d** 而非規劃的 Argon2id，並記錄 Argon2id 的相容性風險
 
 ## 10. 尚未驗證的項目
 
-以下兩項無法在目前環境完成，須在實作階段補上：
+1. **生體辨識的完整解鎖流程** — 已驗證金鑰可依規格產生且受 StrongBox 保護，但 `BiometricPrompt` + `CryptoObject` 的實際解包流程需有 UI 才能測，留待實作階段。
+2. **`invalidatedByBiometricEnrollment` 的實際失效行為** — 需真的在裝置上新增一枚指紋才能驗證，屬破壞性操作，留待實作階段以使用者同意的方式進行。
+3. **SAF 外部變動偵測** — 需搭配實際同步工具驗證。
 
-1. **Android runtime（ART）實際行為** — 本機 `~/Library/Android/sdk` 為空，Android SDK 未安裝。JVM 通過不保證 dex 後在 ART 上通過（尤其 `javax.xml.xpath` 在 Android 上的完整度）。
-2. **KeePassXC 互通性** — 本機未安裝 KeePassXC。§8 所列的跨工具驗收測試尚未執行。此為 KDBX 決策的核心立論，必須驗證。
+## 11. 開發環境（實測記錄）
+
+- JDK：Android Studio 內建 JBR（OpenJDK 25.0.2）
+- Android SDK：`/opt/homebrew/share/android-commandlinetools`（platforms 35/36、build-tools 34/35/36），**非** `~/Library/Android/sdk`
+- Gradle 9.7.0、AGP 9.3.1
+- 測試裝置：Samsung SM-S9210（Galaxy S25），Android 16 / API 36，已透過 adb 連線
+- KeePassXC 2.7.12（`keepassxc-cli` 於 `/opt/homebrew/bin`）
