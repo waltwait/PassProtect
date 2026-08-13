@@ -133,10 +133,11 @@ include(":app")
 
 `app/build.gradle.kts`：
 
+**AGP 9.x 內建 Kotlin 編譯，不可再套用獨立的 `org.jetbrains.kotlin.android` plugin。** 實測 2.1.0 / 2.2.0 / 2.3.0 / 2.4.10 全部失敗：舊版撞 extension 衝突，新版被 AGP 直接以「不再需要，請移除」拒絕。因此下方沒有 Kotlin plugin，也沒有 `kotlinOptions` 區塊；Kotlin 原始碼由 AGP 自行編譯（已於真機驗證 Kotlin 測試可編譯執行）。
+
 ```kotlin
 plugins {
     id("com.android.application") version "9.3.1"
-    id("org.jetbrains.kotlin.android") version "2.1.0"
 }
 
 android {
@@ -156,7 +157,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions { jvmTarget = "11" }
 }
 
 dependencies {
