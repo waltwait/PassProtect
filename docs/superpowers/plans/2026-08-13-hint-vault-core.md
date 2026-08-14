@@ -1744,6 +1744,14 @@ class SafVaultFileTest {
     }
 
     @Test
+    fun writeSiblingDoesNotAppendAnUnwantedExtension() {
+        // "application/octet-stream" 這個 MIME type 在部分裝置上會被自動加上
+        // .bin 副檔名，讓 KeePassXC 認不出這是它的格式
+        val name = subject().writeSibling(".conflict-2026.kdbx", "local".toByteArray())
+        assertTrue("不該被加上非預期的副檔名，實際檔名是 $name", name.endsWith(".kdbx"))
+    }
+
+    @Test
     fun displayNameIsTheFileName() {
         assertEquals("saf-test.kdbx", subject().displayName)
     }
@@ -1816,16 +1824,36 @@ class SafVaultFile(
     override fun lastModified(): Long = document.lastModified()
 
     /**
-     * `createFile` 撞名時的行為由底層 provider 決定（`RawDocumentFile` 與真實
-     * SAF tree provider 一致：不覆寫既有檔案，改用去重後的新名字），因此這裡
-     * 天然滿足 Task 7 review 釘住的合約——絕不覆蓋、回傳實際使用的檔名。
+     * 撞名時的行為不能信任底層 provider——實測 `RawDocumentFile.createFile()`
+     * 完全沒有去重邏輯，撞名會直接靜默覆蓋既有內容（`File.createNewFile()` 的
+     * 回傳值被忽略）。因此自己在建立前用 [uniqueNameFor] 保證拿到一個沒被
+     * 用過的名字，不依賴 provider 的慣例行為。這正是 Task 7 review 釘住的
+     * 合約——絕不覆蓋、回傳實際使用的檔名——所以放在這裡自己保證，而非信任
+     * 上游。
      */
     override fun writeSibling(suffix: String, bytes: ByteArray): String {
-        val name = fileName + suffix
-        val created = directory.createFile("application/octet-stream", name)
+        val name = uniqueNameFor(fileName + suffix)
+        val created = directory.createFile(SIBLING_MIME_TYPE, name)
             ?: throw FileNotFoundException("無法在資料夾中建立 $name")
         context.contentResolver.openOutputStream(created.uri, "wt")?.use { it.write(bytes) }
         return created.name ?: name
+    }
+
+    /** 在目錄裡找一個還沒被用過的檔名，必要時附加遞增的數字後綴。 */
+    private fun uniqueNameFor(base: String): String {
+        if (directory.findFile(base) == null) return base
+        var i = 1
+        while (directory.findFile("$base.$i") != null) i++
+        return "$base.$i"
+    }
+
+    private companion object {
+        /**
+         * 用一個 `MimeTypeMap` 查不到對應副檔名的字串。實測
+         * `"application/octet-stream"` 在部分裝置上會被自動加上 `.bin`，
+         * 讓衝突檔案的檔名不再以 `.kdbx` 結尾，KeePassXC 認不出這是它的格式。
+         */
+        const val SIBLING_MIME_TYPE = "application/vnd.hintvault.kdbx"
     }
 }
 
@@ -1854,7 +1882,7 @@ object VaultUriPermissions {
   -Pandroid.testInstrumentationRunnerArguments.class=com.hintvault.storage.SafVaultFileTest
 ```
 
-預期：7 tests passed。
+預期：8 tests passed。
 
 - [ ] **Step 6: Commit**
 
