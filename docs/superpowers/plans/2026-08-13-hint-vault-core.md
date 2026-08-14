@@ -2099,20 +2099,32 @@ class KeystoreKeys(private val alias: String = DEFAULT_ALIAS) {
         }
     }
 
+    /**
+     * `KeyPermanentlyInvalidatedException` 的實際拋出點是 `Cipher.init()`，
+     * 不是 `KeyStore.getKey()`——後者宣告的受檢例外裡沒有 `InvalidKeyException`
+     * 這一支，Keystore 只在真正要用這把金鑰做加解密運算時才會檢查它是否已
+     * 因生體特徵變更而失效。catch 若包在 `secretKey()` 外面永遠不會觸發，
+     * 平台的原始例外會直接往外傳、讓 app 崩潰，而不是優雅退回主密碼。
+     */
     fun encryptCipher(): Cipher =
-        Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, secretKey()) }
+        Cipher.getInstance(TRANSFORMATION).apply {
+            try {
+                init(Cipher.ENCRYPT_MODE, secretKey())
+            } catch (e: KeyPermanentlyInvalidatedException) {
+                throw KeyPermanentlyInvalidException(e)
+            }
+        }
 
     fun decryptCipher(iv: ByteArray): Cipher =
         Cipher.getInstance(TRANSFORMATION).apply {
-            init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            try {
+                init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            } catch (e: KeyPermanentlyInvalidatedException) {
+                throw KeyPermanentlyInvalidException(e)
+            }
         }
 
-    private fun secretKey(): SecretKey =
-        try {
-            keyStore.getKey(alias, null) as SecretKey
-        } catch (e: KeyPermanentlyInvalidatedException) {
-            throw KeyPermanentlyInvalidException(e)
-        }
+    private fun secretKey(): SecretKey = keyStore.getKey(alias, null) as SecretKey
 
     private fun generate(strongBox: Boolean) {
         val spec = KeyGenParameterSpec.Builder(
