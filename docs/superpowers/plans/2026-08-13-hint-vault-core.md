@@ -842,7 +842,9 @@ git commit -m "feat(crypto): Argon2 參數與耗時校準"
 
 ### Task 5: Vault — KDBX 讀寫
 
-規格 §5.1、§4.3。這是 `vault` 層的核心。關鍵設計：`Vault` 持有底層的 `DomDatabaseWrapper` 不放，讓 KeePassXC 寫入的未知內容在「載入 → 修改 → 存檔」之後仍然保留（spike 已驗證此性質）。
+規格 §5.1、§4.3。這是 `vault` 層的核心。關鍵設計：`Vault` 持有底層的 `DomDatabaseWrapper` 不放，讓 KeePassXC 寫入的未知內容在「載入 → 修改 → 存檔」之後仍然保留。
+
+**更正**：本節原本寫「spike 已驗證此性質」，這是錯的。spike 驗證的是「本 app 寫的檔 → KeePassXC 修改 → 本 app 讀回」，以及本 app 自己寫的自訂欄位在重存後仍在。它**從未**驗證「KeePassXC 寫的檔 → 本 app 修改並存檔 → 對方的內容是否倖存」——而那正是這裡宣稱的性質。因為所有測試都從 `Vault.create` 出發，一個「解析成領域物件再重建文件」的改寫會通過全部測試而不被察覺。此性質改由 Task 5 的 `preservesContentThisAppDoesNotModelAcrossLoadModifySave` 測試把關，使用真實的 KeePassXC fixture。
 
 這些測試可在 JVM 上跑，因為 vendor 的 dom 只用到 `javax.xml`，JVM 與 Android 皆有。
 
