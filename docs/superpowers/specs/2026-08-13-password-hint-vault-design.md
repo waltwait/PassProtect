@@ -227,9 +227,13 @@ hist.2.hint  = 更舊的提示：第一台電腦型號
 ### 5.2 檔案存取
 
 - 以 **SAF**（Storage Access Framework）存取資料庫檔
-- `ACTION_OPEN_DOCUMENT` / `ACTION_CREATE_DOCUMENT` 選定位置，`takePersistableUriPermission` 持久化權限
-- 使用者通常會選同步工具監看的資料夾
+- `ACTION_OPEN_DOCUMENT_TREE` 選定**資料夾**（非單一檔案），`takePersistableUriPermission` 持久化權限
+- 使用者選同步工具監看的資料夾；app 在其中尋找或建立資料庫檔
 - 不使用 `MANAGE_EXTERNAL_STORAGE`（權限過大）
+
+**更正（2026-08-14，於 Task 8 實作中發現）**：本節原訂 `ACTION_OPEN_DOCUMENT`，於實作時發現此路不通——該 intent 只授權單一檔案，不授權其所在目錄。以這種 URI 建構的 `DocumentFile`，其 `parentFile` 恆為 `null`（`androidx.documentfile:documentfile:1.0.1` 之 `RawDocumentFile` 與 `SingleDocumentFile` 皆然，已用 `javap` 反編譯該函式庫位元組碼並於真機實測雙重證實），因此**完全無法建立同目錄的兄弟檔案**——而 §5.3 的衝突偵測正是靠這個能力運作（衝突時另存 `.conflict-<timestamp>.kdbx` 到同一資料夾）。
+
+改為 `ACTION_OPEN_DOCUMENT_TREE`：授權整個資料夾後，`DocumentFile.fromTreeUri()` 取得的目錄物件可正常 `findFile()` / `createFile()`，不依賴 `parentFile`。這與本節「使用者通常會選同步工具監看的資料夾」的原意其實一致——原意就是選資料夾，程式碼選錯了 API。
 
 ### 5.3 外部變動偵測與衝突處理
 

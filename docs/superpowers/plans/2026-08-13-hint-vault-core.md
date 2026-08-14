@@ -1637,9 +1637,13 @@ git commit -m "feat(storage): 存檔策略——備份、衝突偵測、絕不�
 
 ### Task 8: SAF 檔案存取
 
-規格 §5.2。這是 Task 7 那個介面的真實實作，薄薄一層轉接。風險邏輯都已在 Task 7 測過，這裡只需驗證轉接本身。
+規格 §5.2。這是 Task 7 那個介面的真實實作。風險邏輯都已在 Task 7 測過，這裡只需驗證轉接本身。
 
-測試以 `DocumentFile.fromFile()` 建立檔案型的 `DocumentFile`，可在無使用者互動下走完相同的 `ContentResolver` 路徑。**未涵蓋的部分**：`ACTION_OPEN_DOCUMENT` 的選檔流程與 `takePersistableUriPermission`，那需要使用者操作，於 Task 11 手動驗證。
+**本節已於 Task 8 實作階段修正（2026-08-14）**：原設計用 `ACTION_OPEN_DOCUMENT`（單一檔案），但該授權模式下 `DocumentFile.parentFile` 恆為 `null`——已用 `javap` 反編譯 `androidx.documentfile:documentfile:1.0.1` 位元組碼與真機實測雙重證實，`RawDocumentFile` 與 `SingleDocumentFile` 皆無例外。這代表 `writeSibling`（衝突偵測賴以運作的方法）在真正的 SAF URI 上結構性地不可能實作，不是「可能覆蓋」而是「完全寫不出去」。改為 `ACTION_OPEN_DOCUMENT_TREE` 取得整個資料夾的授權，`DocumentFile.fromTreeUri()` 取得的目錄可正常 `findFile()` / `createFile()`，不依賴 `parentFile`。詳見規格 §5.2 更正段落。
+
+`SafVaultFile` 因此改為接收一個已解析好的目錄 `DocumentFile`，而非自己解析 URI——「怎麼從 URI 拿到目錄」是呼叫端（選檔流程）的責任，`SafVaultFile` 只管在一個已知目錄裡讀寫檔案。這個切分讓測試不需要真的 `content://` tree 授權：`DocumentFile.fromFile(directory)`（真機上一個普通目錄）與 `DocumentFile.fromTreeUri(context, treeUri)`（正式環境的 SAF 樹）都支援 `findFile()` / `createFile()`，測試因此能走完全相同的程式碼路徑而不需使用者互動。
+
+**未涵蓋的部分**：`ACTION_OPEN_DOCUMENT_TREE` 的選檔流程與 `takePersistableUriPermission`，那需要使用者操作，於 Task 11 手動驗證。
 
 **Files:**
 - Modify: `app/build.gradle.kts`（加入 `androidx.documentfile`）
@@ -1649,7 +1653,7 @@ git commit -m "feat(storage): 存檔策略——備份、衝突偵測、絕不�
 **Interfaces:**
 - Consumes: `VaultFile`（Task 7）
 - Produces:
-  - `class SafVaultFile(context: Context, uri: Uri) : VaultFile`
+  - `class SafVaultFile(context: Context, directory: DocumentFile, fileName: String) : VaultFile`
   - `object VaultUriPermissions { fun persist(context: Context, uri: Uri); fun isStillGranted(context: Context, uri: Uri): Boolean }`
 
 - [ ] **Step 1: 加入依賴**
@@ -1667,11 +1671,12 @@ git commit -m "feat(storage): 存檔策略——備份、衝突偵測、絕不�
 ```kotlin
 package com.hintvault.storage
 
-import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -1682,15 +1687,18 @@ import java.io.File
 class SafVaultFileTest {
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private lateinit var backing: File
+    private lateinit var dir: File
+    private lateinit var directory: DocumentFile
 
     @Before
     fun setUp() {
-        backing = File(context.cacheDir, "saf-test.kdbx")
-        backing.writeBytes("v1".toByteArray())
+        // 每個測試獨立的目錄，避免上一個測試留下的兄弟檔案互相干擾
+        dir = File(context.cacheDir, "saf-test-${System.nanoTime()}").apply { mkdirs() }
+        directory = DocumentFile.fromFile(dir)
+        File(dir, "saf-test.kdbx").writeBytes("v1".toByteArray())
     }
 
-    private fun subject() = SafVaultFile(context, Uri.fromFile(backing))
+    private fun subject() = SafVaultFile(context, directory, "saf-test.kdbx")
 
     @Test
     fun readsBytesThroughContentResolver() {
@@ -1700,15 +1708,15 @@ class SafVaultFileTest {
     @Test
     fun writesBytesThroughContentResolver() {
         subject().write("v2-longer".toByteArray())
-        assertArrayEquals("v2-longer".toByteArray(), backing.readBytes())
+        assertArrayEquals("v2-longer".toByteArray(), File(dir, "saf-test.kdbx").readBytes())
     }
 
     @Test
     fun writeTruncatesWhenNewContentIsShorter() {
         // SAF 的 "w" 模式不保證截斷，殘留的尾巴會讓 KDBX 檔損毀
-        backing.writeBytes("a-very-long-previous-version".toByteArray())
+        File(dir, "saf-test.kdbx").writeBytes("a-very-long-previous-version".toByteArray())
         subject().write("short".toByteArray())
-        assertArrayEquals("short".toByteArray(), backing.readBytes())
+        assertArrayEquals("short".toByteArray(), File(dir, "saf-test.kdbx").readBytes())
     }
 
     @Test
@@ -1719,10 +1727,20 @@ class SafVaultFileTest {
     @Test
     fun writeSiblingCreatesFileNextToOriginal() {
         val name = subject().writeSibling(".conflict-2026.kdbx", "local".toByteArray())
-        val sibling = File(backing.parentFile, name)
+        val sibling = File(dir, name)
         assertTrue(sibling.exists())
         assertArrayEquals("local".toByteArray(), sibling.readBytes())
-        sibling.delete()
+    }
+
+    @Test
+    fun writeSiblingNeverOverwritesAnExistingFile() {
+        // Task 7 review 釘住的合約：撞名絕不可覆蓋既有檔案，須回傳實際使用的檔名
+        val first = subject().writeSibling(".conflict.kdbx", "first".toByteArray())
+        val second = subject().writeSibling(".conflict.kdbx", "second".toByteArray())
+
+        assertNotEquals("撞名時檔名必須不同", first, second)
+        assertArrayEquals("first".toByteArray(), File(dir, first).readBytes())
+        assertArrayEquals("second".toByteArray(), File(dir, second).readBytes())
     }
 
     @Test
@@ -1755,51 +1773,63 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.FileNotFoundException
 
 /**
- * 透過 SAF 存取資料庫檔。
+ * 透過 SAF 存取資料庫檔，以「已授權的資料夾」為單位操作。
  *
  * 用 SAF 而非 app 私有目錄，是為了讓 Syncthing / Nextcloud 這類同步工具
  * 能碰到同一個檔。不申請 MANAGE_EXTERNAL_STORAGE——權限過大。
+ *
+ * **為何吃 [directory] 而非自己解析 URI**：`ACTION_OPEN_DOCUMENT`（單一檔案）
+ * 建構出的 `DocumentFile.parentFile` 恆為 `null`（`androidx.documentfile:documentfile:1.0.1`
+ * 之 `RawDocumentFile` 與 `SingleDocumentFile` 皆然，已用 `javap` 反編譯與真機
+ * 雙重證實），因此完全無法建立同目錄的兄弟檔案——[writeSibling] 賴以運作的能力。
+ * 呼叫端須改用 `ACTION_OPEN_DOCUMENT_TREE` 取得整個資料夾的授權，用
+ * `DocumentFile.fromTreeUri()` 解析成目錄後傳入。此設計也讓測試能用
+ * `DocumentFile.fromFile()`（一個普通目錄）走完全相同的程式碼路徑，
+ * 不需真的 SAF 授權。
  */
 class SafVaultFile(
     private val context: Context,
-    private val uri: Uri
+    private val directory: DocumentFile,
+    private val fileName: String
 ) : VaultFile {
 
     private val document: DocumentFile
-        get() = (if (uri.scheme == "file") DocumentFile.fromFile(java.io.File(uri.path!!))
-                 else DocumentFile.fromSingleUri(context, uri))
-            ?: throw FileNotFoundException("無法存取 $uri")
+        get() = directory.findFile(fileName)
+            ?: throw FileNotFoundException("在資料夾中找不到 $fileName")
 
     override val displayName: String
-        get() = document.name ?: uri.lastPathSegment.orEmpty()
+        get() = fileName
 
     override fun read(): ByteArray =
-        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: throw FileNotFoundException("無法讀取 $uri")
+        context.contentResolver.openInputStream(document.uri)?.use { it.readBytes() }
+            ?: throw FileNotFoundException("無法讀取 $fileName")
 
     /**
      * 以 "wt" 開啟。純 "w" 在部分 provider 上不會截斷檔案，
      * 新內容較短時會留下舊資料的尾巴，導致 KDBX 檔損毀。
      */
     override fun write(bytes: ByteArray) {
-        context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
-            ?: throw FileNotFoundException("無法寫入 $uri")
+        context.contentResolver.openOutputStream(document.uri, "wt")?.use { it.write(bytes) }
+            ?: throw FileNotFoundException("無法寫入 $fileName")
     }
 
     override fun lastModified(): Long = document.lastModified()
 
+    /**
+     * `createFile` 撞名時的行為由底層 provider 決定（`RawDocumentFile` 與真實
+     * SAF tree provider 一致：不覆寫既有檔案，改用去重後的新名字），因此這裡
+     * 天然滿足 Task 7 review 釘住的合約——絕不覆蓋、回傳實際使用的檔名。
+     */
     override fun writeSibling(suffix: String, bytes: ByteArray): String {
-        val name = displayName + suffix
-        val parent = document.parentFile
-            ?: throw FileNotFoundException("無法取得 $uri 的上層目錄")
-        val created = parent.createFile("application/octet-stream", name)
-            ?: throw FileNotFoundException("無法在 ${parent.uri} 建立 $name")
+        val name = fileName + suffix
+        val created = directory.createFile("application/octet-stream", name)
+            ?: throw FileNotFoundException("無法在資料夾中建立 $name")
         context.contentResolver.openOutputStream(created.uri, "wt")?.use { it.write(bytes) }
         return created.name ?: name
     }
 }
 
-/** 持久化 SAF 授權，讓 app 重啟後仍能存取同一個檔。 */
+/** 持久化 SAF 授權，讓 app 重啟後仍能存取同一個資料夾。 */
 object VaultUriPermissions {
 
     private const val FLAGS =
@@ -1809,7 +1839,7 @@ object VaultUriPermissions {
         context.contentResolver.takePersistableUriPermission(uri, FLAGS)
     }
 
-    /** 使用者可能在系統設定裡撤銷授權，或把檔案刪掉。 */
+    /** 使用者可能在系統設定裡撤銷授權，或把資料夾刪掉。 */
     fun isStillGranted(context: Context, uri: Uri): Boolean =
         context.contentResolver.persistedUriPermissions.any {
             it.uri == uri && it.isReadPermission && it.isWritePermission
@@ -1824,7 +1854,7 @@ object VaultUriPermissions {
   -Pandroid.testInstrumentationRunnerArguments.class=com.hintvault.storage.SafVaultFileTest
 ```
 
-預期：6 tests passed。
+預期：7 tests passed。
 
 - [ ] **Step 6: Commit**
 
