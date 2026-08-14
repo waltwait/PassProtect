@@ -67,4 +67,36 @@ class HistoryCodecTest {
     fun encodeEmptyHistoryProducesNoProperties() {
         assertTrue(HistoryCodec.encode(emptyList()).isEmpty())
     }
+
+    @Test
+    fun decodeIgnoresNonCanonicalIndicesInsteadOfMergingThem() {
+        // KeePassXC 讓使用者手動編輯這些欄位，hist.01.* 是可能出現的。
+        // 它絕不能跟 hist.1.* 併成同一筆——那會讓時間戳與提示文字錯配。
+        val props = mapOf(
+            "hist.1.at" to "2026-06-20T08:30:00Z",
+            "hist.1.hint" to "正確的提示",
+            "hist.01.at" to "2020-01-01T00:00:00Z",
+            "hist.01.hint" to "不該出現的提示"
+        )
+
+        val decoded = HistoryCodec.decode(props)
+
+        assertEquals(1, decoded.size)
+        assertEquals("正確的提示", decoded.single().hint)
+        assertEquals(Instant.parse("2026-06-20T08:30:00Z"), decoded.single().at)
+    }
+
+    @Test
+    fun decodeHandlesSparseIndices() {
+        val props = mapOf(
+            "hist.1.at" to "2026-06-20T08:30:00Z",
+            "hist.1.hint" to "較新",
+            "hist.7.at" to "2026-01-04T10:00:00Z",
+            "hist.7.hint" to "較舊"
+        )
+
+        val decoded = HistoryCodec.decode(props)
+
+        assertEquals(listOf("較新", "較舊"), decoded.map { it.hint })
+    }
 }

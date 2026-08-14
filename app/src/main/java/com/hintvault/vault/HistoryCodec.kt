@@ -39,7 +39,9 @@ object HistoryCodec {
         val byIndex = mutableMapOf<Int, MutableMap<String, String>>()
         for ((key, value) in properties) {
             val match = KEY_PATTERN.matchEntire(key) ?: continue
-            val index = match.groupValues[1].toIntOrNull() ?: continue
+            val digits = match.groupValues[1]
+            val index = digits.toIntOrNull() ?: continue
+            if (digits != index.toString()) continue // 非正規索引（如 "01"）一律忽略，不得併入其他筆
             byIndex.getOrPut(index) { mutableMapOf() }[match.groupValues[2]] = value
         }
         return byIndex.entries
