@@ -2989,7 +2989,7 @@ import com.hintvault.storage.VaultRepository
 import com.hintvault.vault.Entry
 import com.hintvault.vault.HistoricalHint
 import com.hintvault.vault.Vault
-import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -3010,8 +3010,12 @@ class EndToEndTest {
         val dbFile = File(context.cacheDir, "e2e.kdbx").apply { delete() }
         dbFile.writeBytes(Vault.create(KdfParams.DEFAULT).serialize(pw()))
 
+        // SafVaultFile 吃的是已解析好的目錄 DocumentFile，不是單一檔案的 Uri
+        // ——那是 Task 8 review 修掉的設計（ACTION_OPEN_DOCUMENT 的單一檔案
+        // 授權下 parentFile 恆為 null，writeSibling 完全無法運作）。
+        val directory = DocumentFile.fromFile(dbFile.parentFile!!)
         val repo = VaultRepository(
-            SafVaultFile(context, Uri.fromFile(dbFile)),
+            SafVaultFile(context, directory, dbFile.name),
             FileBackupStore(File(context.filesDir, "e2e-backups"))
         )
 
@@ -3119,21 +3123,37 @@ rm -f /tmp/from-keepassxc.kdbx
 printf 'desktop-pass\ndesktop-pass\n' | keepassxc-cli db-create --set-password /tmp/from-keepassxc.kdbx
 printf 'desktop-pass\nentry-pass\nentry-pass\n' | \
   keepassxc-cli add /tmp/from-keepassxc.kdbx -u someone --password-prompt "made-on-desktop"
-adb push /tmp/from-keepassxc.kdbx /sdcard/Download/from-keepassxc.kdbx
+adb push /tmp/from-keepassxc.kdbx /sdcard/Android/data/com.hintvault/files/from-keepassxc.kdbx
 ```
+
+**更正（2026-08-15，於 Task 12 實作中發現）**：原本這裡寫 `adb push` 到 `/sdcard/Download/`，但在 targetSdk 36 的 scoped storage 下，`File` 讀取這種非 app 專屬目錄一律 `EACCES`，需要 `MANAGE_EXTERNAL_STORAGE`——而那正是 `SafVaultFile.kt` 的設計說明裡明講「不申請，權限過大」的東西。改推到 app 私有的外部檔案目錄 `/sdcard/Android/data/com.hintvault/files/`，讀取端對應改用 `context.getExternalFilesDir(null)`。驗證的實質內容不變（仍是真機上、由真正 `keepassxc-cli` 產生、經 `adb push` 送達的位元組，被 `Vault.open()` 開啟），只是測試 fixture 存放位置改變。
 
 然後把下列測試加進 `EndToEndTest.kt`，確認本 app 讀得了桌面端建立的檔案：
 
 ```kotlin
     /**
      * 方向二：KeePassXC 建立的資料庫（KDBX 3.1 / AES-KDF）必須能被本 app 開啟。
-     * 執行前需先依 Step 5 的指令產生並 push 該檔。
+     *
+     * 執行前需先在電腦上跑這三行，再用 adb push 送到裝置：
+     *
+     *   rm -f /tmp/from-keepassxc.kdbx
+     *   printf 'desktop-pass\ndesktop-pass\n' | keepassxc-cli db-create --set-password /tmp/from-keepassxc.kdbx
+     *   printf 'desktop-pass\nentry-pass\nentry-pass\n' | \
+     *     keepassxc-cli add /tmp/from-keepassxc.kdbx -u someone --password-prompt "made-on-desktop"
+     *   adb push /tmp/from-keepassxc.kdbx /sdcard/Android/data/com.hintvault/files/from-keepassxc.kdbx
+     *
+     * 注意目的地是 app 私有的外部檔案目錄，不是 /sdcard/Download——後者在
+     * targetSdk 36 下對一般 File 讀取一律 EACCES，且本專案刻意不申請
+     * MANAGE_EXTERNAL_STORAGE 去繞過它（見 SafVaultFile.kt 的設計說明）。
+     * 推到錯的路徑不會讓測試失敗，只會讓它被 Assume 跳過——那樣就沒有
+     * 真的驗證到方向二的互通性，卻看起來像是全部測試都通過了。
      */
     @Test
     fun opensDatabaseCreatedByKeePassXc() {
-        val pushed = File("/sdcard/Download/from-keepassxc.kdbx")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pushed = File(context.getExternalFilesDir(null), "from-keepassxc.kdbx")
         org.junit.Assume.assumeTrue(
-            "需先執行 Task 12 Step 5 的 adb push", pushed.exists()
+            "需先執行上方 KDoc 列出的 keepassxc-cli + adb push 指令", pushed.exists()
         )
 
         val vault = Vault.open(pushed.readBytes(), "desktop-pass".toCharArray())
