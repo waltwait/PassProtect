@@ -143,4 +143,45 @@ class VaultTest {
         assertEquals("較新", raw["hist.1.hint"])
         assertNull(raw["hist.2.hint"])
     }
+
+    @Test
+    fun preservesContentThisAppDoesNotModelAcrossLoadModifySave() {
+        // 這是整個設計最重要的性質：DOM 實作保留整份 XML，所以 KeePassXC 寫入
+        // 而本 app 不認識的內容（群組結構、圖示、其他欄位）在「載入→修改→存檔」
+        // 之後仍然存在。若有人把 Vault 改成「解析成領域物件再重建文件」，
+        // 上面 11 個測試全都還會過，只有這個會抓到。
+        val original = javaClass.getResourceAsStream("/xc.kdbx")!!.readBytes()
+        val pw = "xcpass".toCharArray()
+
+        val vault = Vault.open(original, pw)
+        val existing = vault.entries().single()
+        vault.upsert(sampleEntry("added-by-app"))
+
+        val reopened = Vault.open(vault.serialize(pw), pw)
+
+        // KeePassXC 建立的那筆必須原封不動，且不可被複製成兩份
+        val survivors = reopened.entries().filter { it.title == "gmail.com" }
+        assertEquals("KeePassXC 的 entry 不可消失也不可重複", 1, survivors.size)
+        assertEquals(existing.id, survivors.single().id)
+
+        // 本 app 不建模的欄位也必須存活
+        val raw = reopened.rawEntryProperties(survivors.single().id)
+        assertEquals("milktea", raw["UserName"])
+
+        assertEquals(2, reopened.entries().size)
+    }
+
+    @Test
+    fun malformedIdMarkerFallsBackInsteadOfBreakingTheWholeList() {
+        val vault = Vault.create(fastKdf)
+        val good = sampleEntry("github.com")
+        vault.upsert(good)
+        vault.upsert(sampleEntry("gmail.com"))
+
+        // 模擬使用者在 KeePassXC 裡把 hv.id 清掉或改壞
+        vault.corruptIdMarkerForTest(good.id, "not-a-uuid")
+
+        // 兩筆都還要列得出來，不能整個清單掛掉
+        assertEquals(2, vault.entries().size)
+    }
 }
