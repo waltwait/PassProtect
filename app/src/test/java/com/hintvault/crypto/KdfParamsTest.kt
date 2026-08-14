@@ -1,6 +1,7 @@
 package com.hintvault.crypto
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,5 +56,27 @@ class KdfParamsTest {
     @Test
     fun budgetMatchesSpec() {
         assertTrue(KdfParams.MAX_ACCEPTABLE_MILLIS == 3000L)
+    }
+
+    @Test
+    fun ladderNeverGoesBelowTheSecurityFloor() {
+        // 這是安全決策，不是實作細節：階梯不得再往下加更弱的級數。
+        assertEquals(16L, KdfParams.FLOOR.memoryMib)
+        assertEquals(KdfParams.FLOOR, KdfParams.CALIBRATION_LADDER.last())
+        assertTrue(KdfParams.CALIBRATION_LADDER.all { it.memoryMib >= KdfParams.FLOOR.memoryMib })
+    }
+
+    @Test
+    fun calibrateReturnsFloorRatherThanSomethingWeakerOnAVerySlowDevice() {
+        val chosen = KdfParams.calibrate { 60_000L }
+        assertEquals(KdfParams.FLOOR, chosen)
+        assertTrue("絕不可為了速度低於安全下限", chosen.memoryMib >= 16L)
+    }
+
+    @Test
+    fun exceedsBudgetReportsWhetherUiShouldWarn() {
+        assertTrue(KdfParams.exceedsBudget(KdfParams.MAX_ACCEPTABLE_MILLIS + 1))
+        assertFalse(KdfParams.exceedsBudget(KdfParams.MAX_ACCEPTABLE_MILLIS))
+        assertFalse(KdfParams.exceedsBudget(500L))
     }
 }
