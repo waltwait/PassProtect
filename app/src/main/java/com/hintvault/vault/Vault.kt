@@ -18,6 +18,26 @@ import java.util.UUID
 class WrongPasswordException(cause: Throwable? = null) :
     Exception("無法以此主密碼開啟資料庫", cause)
 
+/** 檔案格式本身不受支援（例如 KeePassXC 用 Argon2id 建立的資料庫）。 */
+class UnsupportedVaultFormatException(cause: Throwable) :
+    Exception("此資料庫使用本 app 不支援的格式或演算法", cause)
+
+/**
+ * 函式庫解析標頭時若 KDF（或 cipher）UUID 未註冊，會擲出
+ * `IllegalArgumentException("Unknown Cipher UUID")`——見
+ * `Encryption.KeyDerivationFunction.getKdf(UUID)`，由
+ * `KdbxHeader.setKdfParameters()` 呼叫，而後者是在解析「標頭明文」時執行，
+ * 早於任何需要密碼的解密步驟。因此這個例外與密碼對不對無關：本函式庫只
+ * 註冊了 AES-KDF 與 Argon2d，KeePassXC 用 Argon2id 建的檔案一定會落在這裡。
+ * 可以放心與「密碼錯誤」分開分類，不必用猜的。
+ *
+ * 沒有更精確的例外型別可用（IllegalArgumentException 是泛用型別），
+ * 因此比對訊息字串是必要手段，而非偷懶。
+ */
+private fun Throwable.isUnknownKdfOrCipherUuid(): Boolean =
+    generateSequence(this) { it.cause }
+        .any { it is IllegalArgumentException && it.message == "Unknown Cipher UUID" }
+
 /**
  * 一個已開啟的 KDBX 資料庫。
  *
@@ -44,6 +64,7 @@ class Vault private constructor(
             val db = try {
                 DomDatabaseWrapper.load(creds, ByteArrayInputStream(bytes))
             } catch (e: Exception) {
+                if (e.isUnknownKdfOrCipherUuid()) throw UnsupportedVaultFormatException(e)
                 // 函式庫對錯誤密碼擲出 IllegalStateException，對損毀檔案擲出各種例外。
                 // 一律轉成同一個型別；cause 保留在裡面供除錯用，只是不讓呼叫端
                 // 依錯誤「種類」做判斷分支。
@@ -53,21 +74,27 @@ class Vault private constructor(
         }
 
         /**
-         * 沿用檔案自己的 Argon2 成本參數。
+         * 沿用檔案自己的 Argon2 成本參數，但**絕不低於 [KdfParams.FLOOR]**。
          *
-         * 不這樣做的話，在慢機器上校準到 FLOOR 的資料庫，會在下次存檔時被寫回
-         * DEFAULT，之後每次解鎖都超出 Task 4 要守的預算——等於把校準結果靜默作廢。
-         * 檔案若不是用 Argon2（例如 KeePassXC 的 AES-KDF 3.1 檔），沒有可沿用的
-         * 參數，才退回 DEFAULT。
+         * 沿用的理由：在慢機器上校準到 FLOOR 的資料庫，若每次存檔都寫回 DEFAULT，
+         * 之後每次解鎖都會超出預算——等於把校準結果靜默作廢。
+         *
+         * 夾住下限的理由：檔案可能來自別的工具、被手動編輯、或根本是惡意構造的。
+         * 低於 1 MiB 會整數截斷成 0，讓 BouncyCastle 在存檔時擲例外而使資料庫
+         * 永久存不了；1–15 MiB 則低於本 app 的安全下限（見 53006cb：「慢一點，
+         * 不能弱一點」）。兩者都不接受。
+         *
+         * 不夾上限：使用者若在桌面端刻意選了更強的參數，那是他的決定，
+         * 我們沒有理由替他調弱。解鎖較慢由 UI 以 [KdfParams.exceedsBudget] 提示。
          */
         private fun DomDatabaseWrapper.kdfParamsOrDefault(): KdfParams {
             val header = (streamFormat as? KdbxStreamFormat)?.streamConfiguration ?: return KdfParams.DEFAULT
             val kdf = header.kdfParameters ?: return KdfParams.DEFAULT
             return try {
                 KdfParams(
-                    memoryMib = kdf.mustGet("M").asLong() / (1024 * 1024),
-                    iterations = kdf.mustGet("I").asLong(),
-                    parallelism = kdf.mustGet("P").asInteger()
+                    memoryMib = maxOf(kdf.mustGet("M").asLong() / (1024 * 1024), KdfParams.FLOOR.memoryMib),
+                    iterations = maxOf(kdf.mustGet("I").asLong(), KdfParams.FLOOR.iterations),
+                    parallelism = maxOf(kdf.mustGet("P").asInteger(), KdfParams.FLOOR.parallelism)
                 )
             } catch (_: Exception) {
                 KdfParams.DEFAULT
@@ -132,27 +159,44 @@ class Vault private constructor(
         findRaw(id)?.setProperty(PROP_UUID_MARKER, value)
     }
 
-    private fun findRaw(id: UUID): DomEntryWrapper? {
-        val target = id.toString()
-        return db.findEntries { it.getProperty(PROP_UUID_MARKER) == target }.firstOrNull()
-            // KeePassXC 建立的 entry 沒有 hv.id，其領域 id 來自 KDBX 自己的 UUID。
-            // 讀路徑（toDomainEntry）已經這樣退回，寫路徑也必須，否則會變成
-            // 「找不到 → 新建一筆」，把使用者的 entry 複製成兩份且原本那份永遠刪不掉。
-            ?: db.findEntries { it.uuid == id }.firstOrNull()
-    }
+    /** 測試用：檢視本 vault 存檔時會使用的 KDF 參數。 */
+    internal fun kdfParamsForTest(): KdfParams = kdf
+
+    private fun findRaw(id: UUID): DomEntryWrapper? =
+        db.findEntries { it.domainId() == id }.firstOrNull()
 
     private fun DomEntryWrapper.toDomainEntry(): Entry {
         val props = propertyNames.associateWith { getProperty(it) ?: "" }
         return Entry(
-            // hv.id 壞掉或被使用者清空時退回 KDBX 自己的 UUID。
-            // 一筆壞資料不該讓整個清單開不出來——Task 3 的 HistoryCodec 也是這個原則。
-            id = props[PROP_UUID_MARKER]?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: uuid,
+            id = domainId(),
             title = props[PROP_TITLE].orEmpty(),
             hint = props[PROP_PASSWORD].orEmpty(),
             modifiedAt = lastModificationTime?.toInstant() ?: Instant.EPOCH,
             history = HistoryCodec.decode(props)
         )
     }
+
+    /**
+     * 領域 id 的單一權威來源，讀路徑（[toDomainEntry]）與寫路徑（[findRaw]）
+     * 都必須經過這裡，否則兩邊會各自用不同邏輯判斷「這是同一筆」，一旦不一致
+     * 就會出現「明明列得出來，一改就變兩筆、原本那筆刪不掉」的錯誤——
+     * 不論是因為 hv.id 遺失（KeePassXC 建立的 entry）、格式不正規（大寫、
+     * 缺 hyphen），還是整個壞掉。
+     *
+     * `hv.id` 存在且能解析成 UUID 時優先採用；否則退回 KDBX 自己的
+     * `<UUID>` 元素——`Helpers.uuidFromBase64` 在該元素缺失或截斷時會擲
+     * NPE / BufferUnderflowException，用 runCatching 吞掉，避免一筆壞資料
+     * 讓 findEntries{...} 對每一筆都跑一次此函式時整個查詢失敗。
+     * 兩者都拿不到時退回全零 UUID，只求不拋例外，不保證能被找回。
+     */
+    // 定義在函式庫的 Entry 介面上（用全限定名，避免撞到本檔案的領域 Entry 型別），
+    // 而非 DomEntryWrapper：db.findEntries { ... } 傳進 lambda 的 it 是
+    // Entry.Matcher.matches(Entry) 這個 SAM 介面的參數，靜態型別是（未參數化的）
+    // 介面本身，不是 DomEntryWrapper，寫在 DomEntryWrapper 上 findRaw 裡會解析不到。
+    private fun org.linguafranca.pwdb.Entry<*, *, *, *>.domainId(): UUID =
+        getProperty(PROP_UUID_MARKER)?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+            ?: runCatching { uuid }.getOrNull()
+            ?: UUID(0L, 0L)
 }
 
 /**

@@ -1,10 +1,18 @@
 package com.hintvault.vault
 
 import com.hintvault.crypto.KdfParams
+import com.hintvault.crypto.toUtf8Bytes
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.linguafranca.pwdb.kdbx.KdbxCreds
+import org.linguafranca.pwdb.kdbx.KdbxHeader
+import org.linguafranca.pwdb.kdbx.KdbxStreamFormat
+import org.linguafranca.pwdb.kdbx.dom.DomDatabaseWrapper
+import org.linguafranca.pwdb.security.Argon2
+import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.util.UUID
 
@@ -183,5 +191,97 @@ class VaultTest {
 
         // 兩筆都還要列得出來，不能整個清單掛掉
         assertEquals(2, vault.entries().size)
+    }
+
+    @Test
+    fun carriesTheFilesOwnKdfCostForwardOnResave() {
+        // 校準結果必須跨 session 存活，否則慢機器每次重開都被寫回 DEFAULT
+        val calibrated = KdfParams(memoryMib = 16, iterations = 3, parallelism = 2)
+        val bytes = Vault.create(calibrated).serialize(pw())
+
+        val resaved = Vault.open(bytes, pw()).serialize(pw())
+        val params = Vault.open(resaved, pw()).kdfParamsForTest()
+
+        assertEquals(16L, params.memoryMib)
+        assertEquals(3L, params.iterations)
+    }
+
+    @Test
+    fun neverCarriesForwardAKdfWeakerThanTheFloor() {
+        // 8 MiB 的檔（外部工具或手動編輯產生）不得讓本 app 寫出低於下限的 KDF
+        val weak = KdfParams(memoryMib = 8, iterations = 1, parallelism = 1)
+        val bytes = Vault.create(weak).serialize(pw())
+
+        val params = Vault.open(bytes, pw()).kdfParamsForTest()
+
+        assertEquals(KdfParams.FLOOR.memoryMib, params.memoryMib)
+        assertTrue(params.iterations >= KdfParams.FLOOR.iterations)
+        assertTrue(params.parallelism >= KdfParams.FLOOR.parallelism)
+    }
+
+    @Test
+    fun aFileWithAbsurdlySmallMemoryStillSaves() {
+        // M < 1 MiB 會整數截斷成 0，BouncyCastle 會擲例外讓資料庫永久存不了。
+        //
+        // 偏離審查給的原始寫法之處：原本的 `KdfParams(memoryMib = 0, ...)` 這個
+        // 區域變數從未被用到——Vault.create()/serialize() 對「自己」的 kdf 沒有
+        // 夾制（夾制只發生在 open() 讀別人檔案時），所以 memoryMib=0 一旦真的
+        // 拿去 Vault.create(absurd).serialize(pw()) 會在「建立當下」就讓
+        // BouncyCastle 擲例外，根本到不了「開啟已存在的檔案」這個要測的路徑。
+        // 因此改為繞過 Vault，直接用底層函式庫組一個 M = 512 KiB（位元組數，
+        // 換算 MiB 時整數除法會截斷成 0）的檔案，這樣才是真正在跑
+        // kdfParamsOrDefault() 的夾制邏輯，而不是跑一個永遠不會執行的分支。
+        val header = KdbxHeader(4).apply {
+            keyDerivationFunction = Argon2.getInstance()
+            kdfParameters.putULong("M", 512L * 1024) // 512 KiB：換成 MiB 會整數截斷成 0
+            kdfParameters.putULong("I", 2)
+            kdfParameters.putUInt("P", 2)
+        }
+        val out = ByteArrayOutputStream()
+        DomDatabaseWrapper().save(KdbxStreamFormat(header), KdbxCreds(pw().toUtf8Bytes()), out)
+
+        val vault = Vault.open(out.toByteArray(), pw())
+
+        // 直接驗證夾制邏輯：不論檔案宣稱什麼，存檔都不能炸
+        assertNotNull(vault.serialize(pw()))
+        assertTrue(vault.kdfParamsForTest().memoryMib >= KdfParams.FLOOR.memoryMib)
+    }
+
+    @Test
+    fun nonCanonicalIdMarkerStillUpdatesInPlaceInsteadOfDuplicating() {
+        // 大寫 UUID 是完全正常的寫法。字串比對會認不得，於是又變成「找不到→新建」。
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry("github.com")
+        vault.upsert(entry)
+        vault.corruptIdMarkerForTest(entry.id, entry.id.toString().uppercase())
+
+        val listed = vault.entries().single()
+        vault.upsert(listed.copy(hint = "改過的提示"))
+
+        assertEquals(1, vault.entries().size)
+        assertEquals("改過的提示", vault.entries().single().hint)
+        assertTrue(vault.delete(listed.id))
+        assertTrue(vault.entries().isEmpty())
+    }
+
+    @Test
+    fun upsertOnKeePassXcAuthoredEntryUpdatesInPlaceAndDeletes() {
+        // C1 的直接迴歸測試：桌面端建立的 entry 沒有 hv.id，寫路徑必須靠 KDBX UUID
+        // 找到它。找不到就會「新建一筆」，把使用者的 entry 複製成兩份，
+        // 而原本那份帶著舊提示、永遠刪不掉。
+        val original = javaClass.getResourceAsStream("/xc.kdbx")!!.readBytes()
+        val pw = "xcpass".toCharArray()
+
+        val vault = Vault.open(original, pw)
+        val listed = vault.entries().single()
+        vault.upsert(listed.copy(hint = "手機上改的提示"))
+
+        val reopened = Vault.open(vault.serialize(pw), pw)
+        assertEquals("不可複製成兩份", 1, reopened.entries().size)
+        assertEquals("手機上改的提示", reopened.entries().single().hint)
+
+        val again = Vault.open(reopened.serialize(pw), pw)
+        assertTrue(again.delete(again.entries().single().id))
+        assertTrue(again.entries().isEmpty())
     }
 }
