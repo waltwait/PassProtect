@@ -112,9 +112,16 @@ class EndToEndTest {
 
     /**
      * 方向二：KeePassXC 建立的資料庫（KDBX 3.1 / AES-KDF）必須能被本 app 開啟。
-     * 執行前需先依 Task 12 Step 5 的指令產生並 push 該檔。
      *
-     * 路徑刻意不是原始構想的 `/sdcard/Download`：讀取該路徑需要
+     * 執行前需先在電腦上跑這幾行，再用 adb push 送到裝置：
+     *
+     *   rm -f /tmp/from-keepassxc.kdbx
+     *   printf 'desktop-pass\ndesktop-pass\n' | keepassxc-cli db-create --set-password /tmp/from-keepassxc.kdbx
+     *   printf 'desktop-pass\nentry-pass\nentry-pass\n' | \
+     *     keepassxc-cli add /tmp/from-keepassxc.kdbx -u someone --password-prompt "made-on-desktop"
+     *   adb push /tmp/from-keepassxc.kdbx /sdcard/Android/data/com.hintvault/files/from-keepassxc.kdbx
+     *
+     * 目的地刻意不是原始構想的 `/sdcard/Download`：讀取該路徑需要
      * `MANAGE_EXTERNAL_STORAGE`，而這正是本 app 刻意不申請的權限（見
      * SafVaultFile.kt 的說明）。實測（Galaxy S25 / Android 16 / One UI，
      * targetSdk 36）：`adb shell appops set com.hintvault
@@ -123,14 +130,15 @@ class EndToEndTest {
      * 也會讓這個測試依賴一個 app 本身故意不用的權限，形同測了一條產品
      * 不會走的路徑。改用 app 私有的外部檔案目錄：一樣是真機上、由真正
      * keepassxc-cli 產生並以 adb push 送達的位元組，只是取得路徑改用
-     * app 自己就能存取、不需額外權限的位置，繞開與 KDBX 相容性本身無關的
-     * 作業系統儲存權限障礙。
+     * app 自己就能存取、不需額外權限的位置。推到 `/sdcard/Download` 不會
+     * 讓這個測試失敗，只會讓它被下面的 Assume 靜默跳過——看起來像全部
+     * 測試都通過了，實際上完全沒驗證到方向二的互通性。
      */
     @Test
     fun opensDatabaseCreatedByKeePassXc() {
         val pushed = File(context.getExternalFilesDir(null), "from-keepassxc.kdbx")
         org.junit.Assume.assumeTrue(
-            "需先執行 Task 12 Step 5 的 adb push", pushed.exists()
+            "需先執行上方 KDoc 列出的 keepassxc-cli + adb push 指令", pushed.exists()
         )
 
         val vault = Vault.open(pushed.readBytes(), "desktop-pass".toCharArray())
