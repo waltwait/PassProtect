@@ -1752,6 +1752,24 @@ class SafVaultFileTest {
     }
 
     @Test
+    fun writeSiblingContentIsReadableBackImmediately() {
+        // 冒煙測試：writeSibling 寫完的檔案必須真的可讀，不能是空檔案假裝成功
+        val name = subject().writeSibling(".conflict-verify.kdbx", "verify-me".toByteArray())
+        assertArrayEquals("verify-me".toByteArray(), File(dir, name).readBytes())
+    }
+
+    @Test
+    fun uniqueNameOnCollisionKeepsTheKdbxExtension() {
+        // 撞名時的第二個檔名也必須以 .kdbx 結尾，否則 KeePassXC 認不出來——
+        // 這正是 SIBLING_MIME_TYPE 那個修正要保護的性質，不能被去重邏輯自己破壞
+        val first = subject().writeSibling(".conflict.kdbx", "first".toByteArray())
+        val second = subject().writeSibling(".conflict.kdbx", "second".toByteArray())
+
+        assertTrue("第一個檔名 $first 必須以 .kdbx 結尾", first.endsWith(".kdbx"))
+        assertTrue("第二個檔名 $second 也必須以 .kdbx 結尾", second.endsWith(".kdbx"))
+    }
+
+    @Test
     fun displayNameIsTheFileName() {
         assertEquals("saf-test.kdbx", subject().displayName)
     }
@@ -1836,15 +1854,22 @@ class SafVaultFile(
         val created = directory.createFile(SIBLING_MIME_TYPE, name)
             ?: throw FileNotFoundException("無法在資料夾中建立 $name")
         context.contentResolver.openOutputStream(created.uri, "wt")?.use { it.write(bytes) }
+            ?: throw FileNotFoundException("無法寫入 $name")
         return created.name ?: name
     }
 
-    /** 在目錄裡找一個還沒被用過的檔名，必要時附加遞增的數字後綴。 */
+    /** 在目錄裡找一個還沒被用過的檔名，必要時在副檔名前插入遞增的數字，
+     *  這樣撞名時第二個檔案仍以 .kdbx 結尾，KeePassXC 才認得出來。 */
     private fun uniqueNameFor(base: String): String {
         if (directory.findFile(base) == null) return base
+
+        val dot = base.lastIndexOf('.')
+        val stem = if (dot > 0) base.substring(0, dot) else base
+        val ext = if (dot > 0) base.substring(dot) else ""
+
         var i = 1
-        while (directory.findFile("$base.$i") != null) i++
-        return "$base.$i"
+        while (directory.findFile("$stem.$i$ext") != null) i++
+        return "$stem.$i$ext"
     }
 
     private companion object {
@@ -1882,7 +1907,7 @@ object VaultUriPermissions {
   -Pandroid.testInstrumentationRunnerArguments.class=com.hintvault.storage.SafVaultFileTest
 ```
 
-預期：8 tests passed。
+預期：10 tests passed。
 
 - [ ] **Step 6: Commit**
 

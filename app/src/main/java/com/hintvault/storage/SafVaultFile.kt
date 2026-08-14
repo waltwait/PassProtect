@@ -62,15 +62,22 @@ class SafVaultFile(
         val created = directory.createFile(SIBLING_MIME_TYPE, name)
             ?: throw FileNotFoundException("無法在資料夾中建立 $name")
         context.contentResolver.openOutputStream(created.uri, "wt")?.use { it.write(bytes) }
+            ?: throw FileNotFoundException("無法寫入 $name")
         return created.name ?: name
     }
 
-    /** 在目錄裡找一個還沒被用過的檔名，必要時附加遞增的數字後綴。 */
+    /** 在目錄裡找一個還沒被用過的檔名，必要時在副檔名前插入遞增的數字，
+     *  這樣撞名時第二個檔案仍以 .kdbx 結尾，KeePassXC 才認得出來。 */
     private fun uniqueNameFor(base: String): String {
         if (directory.findFile(base) == null) return base
+
+        val dot = base.lastIndexOf('.')
+        val stem = if (dot > 0) base.substring(0, dot) else base
+        val ext = if (dot > 0) base.substring(dot) else ""
+
         var i = 1
-        while (directory.findFile("$base.$i") != null) i++
-        return "$base.$i"
+        while (directory.findFile("$stem.$i$ext") != null) i++
+        return "$stem.$i$ext"
     }
 
     private companion object {

@@ -81,6 +81,24 @@ class SafVaultFileTest {
     }
 
     @Test
+    fun writeSiblingContentIsReadableBackImmediately() {
+        // 冒煙測試：writeSibling 寫完的檔案必須真的可讀，不能是空檔案假裝成功
+        val name = subject().writeSibling(".conflict-verify.kdbx", "verify-me".toByteArray())
+        assertArrayEquals("verify-me".toByteArray(), File(dir, name).readBytes())
+    }
+
+    @Test
+    fun uniqueNameOnCollisionKeepsTheKdbxExtension() {
+        // 撞名時的第二個檔名也必須以 .kdbx 結尾，否則 KeePassXC 認不出來——
+        // 這正是 SIBLING_MIME_TYPE 那個修正要保護的性質，不能被去重邏輯自己破壞
+        val first = subject().writeSibling(".conflict.kdbx", "first".toByteArray())
+        val second = subject().writeSibling(".conflict.kdbx", "second".toByteArray())
+
+        assertTrue("第一個檔名 $first 必須以 .kdbx 結尾", first.endsWith(".kdbx"))
+        assertTrue("第二個檔名 $second 也必須以 .kdbx 結尾", second.endsWith(".kdbx"))
+    }
+
+    @Test
     fun displayNameIsTheFileName() {
         assertEquals("saf-test.kdbx", subject().displayName)
     }
