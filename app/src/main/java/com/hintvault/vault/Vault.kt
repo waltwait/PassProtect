@@ -55,10 +55,21 @@ class Vault private constructor(
         private const val PROP_TITLE = "Title"
         private const val PROP_PASSWORD = "Password"
 
-        /** 主密碼不在此處要求——它只有在 [serialize] 寫出位元組時才用得到。 */
+        /**
+         * 主密碼不在此處要求——它只有在 [serialize] 寫出位元組時才用得到。
+         *
+         * [kdf] 一律夾到不低於 [KdfParams.FLOOR]，理由與 [kdfParamsOrDefault] 相同：
+         * 這裡是唯一真的會被拿去建立新資料庫的路徑，任何呼叫端（包含之後的 UI）
+         * 傳進來的參數都不該讓資料庫用低於安全下限的 KDF 存檔。
+         */
         fun create(kdf: KdfParams = KdfParams.DEFAULT): Vault =
-            Vault(DomDatabaseWrapper(), kdf)
+            Vault(DomDatabaseWrapper(), kdf.clampedToFloor())
 
+        /**
+         * [masterPassword] 的所有權留在呼叫端——本函式只清空自己內部由它
+         * 衍生出的 UTF-8 位元組拷貝（經 [useThenWipe]），不會動呼叫端傳進來
+         * 的這個陣列。呼叫端用完後必須自己呼叫 `masterPassword.wipe()`。
+         */
         fun open(bytes: ByteArray, masterPassword: CharArray): Vault {
             val creds = masterPassword.toUtf8Bytes().useThenWipe { KdbxCreds(it) }
             val db = try {
@@ -92,10 +103,10 @@ class Vault private constructor(
             val kdf = header.kdfParameters ?: return KdfParams.DEFAULT
             return try {
                 KdfParams(
-                    memoryMib = maxOf(kdf.mustGet("M").asLong() / (1024 * 1024), KdfParams.FLOOR.memoryMib),
-                    iterations = maxOf(kdf.mustGet("I").asLong(), KdfParams.FLOOR.iterations),
-                    parallelism = maxOf(kdf.mustGet("P").asInteger(), KdfParams.FLOOR.parallelism)
-                )
+                    memoryMib = kdf.mustGet("M").asLong() / (1024 * 1024),
+                    iterations = kdf.mustGet("I").asLong(),
+                    parallelism = kdf.mustGet("P").asInteger()
+                ).clampedToFloor()
             } catch (_: Exception) {
                 KdfParams.DEFAULT
             }
@@ -115,9 +126,11 @@ class Vault private constructor(
         target.setProperty(PROP_TITLE, entry.title)
         target.setProperty(PROP_PASSWORD, entry.hint)
 
-        // 先清掉所有既有的 hist.* 欄位，再寫入新的。
-        // 少了這一步，history 變短時舊欄位會殘留成幽靈資料。
-        target.propertyNames.filter { it.startsWith("hist.") }
+        // 先清掉所有既有的 hist.<n>.(at|hint) 欄位，再寫入新的。
+        // 少了這一步，history 變短時舊欄位會殘留成幽靈資料。用 HistoryCodec
+        // 的嚴格判斷而非鬆散字首比對，否則使用者手動加在 KeePassXC 上、
+        // 湊巧以 "hist." 開頭但格式不同的屬性會被當垃圾清掉。
+        target.propertyNames.filter { HistoryCodec.isHistoryKey(it) }
             .forEach { target.removeProperty(it) }
         HistoryCodec.encode(entry.history).forEach { (k, v) -> target.setProperty(k, v) }
     }
@@ -134,6 +147,11 @@ class Vault private constructor(
         return true
     }
 
+    /**
+     * [masterPassword] 的所有權留在呼叫端——本函式只清空自己內部由它
+     * 衍生出的 UTF-8 位元組拷貝（經 [useThenWipe]），不會動呼叫端傳進來
+     * 的這個陣列。呼叫端用完後必須自己呼叫 `masterPassword.wipe()`。
+     */
     fun serialize(masterPassword: CharArray): ByteArray {
         val header = KdbxHeader(4).apply {
             keyDerivationFunction = Argon2.getInstance()
@@ -157,6 +175,11 @@ class Vault private constructor(
     /** 測試用：把某筆記錄的 hv.id 改成指定值，模擬外部工具寫壞這個欄位。 */
     internal fun corruptIdMarkerForTest(id: UUID, value: String) {
         findRaw(id)?.setProperty(PROP_UUID_MARKER, value)
+    }
+
+    /** 測試用：直接在某筆記錄底層設一個任意屬性，模擬外部工具寫入本 app 不認識的欄位。 */
+    internal fun setRawPropertyForTest(id: UUID, key: String, value: String) {
+        findRaw(id)?.setProperty(key, value)
     }
 
     /** 測試用：檢視本 vault 存檔時會使用的 KDF 參數。 */

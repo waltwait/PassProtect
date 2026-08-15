@@ -17,6 +17,17 @@ data class KdfParams(
 ) {
     val memoryBytes: Long get() = memoryMib * 1024 * 1024
 
+    /**
+     * 逐欄位夾到不低於 [FLOOR]。用於任何「即將真的拿去建立資料庫」的參數，
+     * 不論來源是使用者輸入、外部檔案沿用（見 Vault.kdfParamsOrDefault），
+     * 還是呼叫端的硬編碼——這裡是最後一道防線。
+     */
+    fun clampedToFloor(): KdfParams = KdfParams(
+        memoryMib = maxOf(memoryMib, FLOOR.memoryMib),
+        iterations = maxOf(iterations, FLOOR.iterations),
+        parallelism = maxOf(parallelism, FLOOR.parallelism)
+    )
+
     companion object {
         val DEFAULT = KdfParams(memoryMib = 32, iterations = 2, parallelism = 2)
 

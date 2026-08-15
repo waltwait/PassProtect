@@ -1,6 +1,7 @@
 package com.hintvault.vault
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -84,6 +85,21 @@ class HistoryCodecTest {
         assertEquals(1, decoded.size)
         assertEquals("正確的提示", decoded.single().hint)
         assertEquals(Instant.parse("2026-06-20T08:30:00Z"), decoded.single().at)
+    }
+
+    @Test
+    fun isHistoryKeyAcceptsOnlyTheCanonicalShape() {
+        assertTrue(HistoryCodec.isHistoryKey("hist.1.at"))
+        assertTrue(HistoryCodec.isHistoryKey("hist.20.hint"))
+        assertFalse(HistoryCodec.isHistoryKey("hist.note"))
+        // "hist.01.at" 符合 KEY_PATTERN 的形狀（\d+ 允許前導零），isHistoryKey
+        // 只判斷「這把鍵是不是 hist.<n>.(at|hint) 這個形狀」，不判斷索引是否
+        // 正規——正規性檢查是 decode() 內較晚的另一道獨立判斷。這樣是對的：
+        // isHistoryKey 的用途是 Vault.upsert() 判斷「這把鍵是不是清掉重寫的
+        // 對象」，而 hist.01.at 這種外部工具編輯留下的非正規索引，本來就該
+        // 被我們自己的重寫清掉，不是需要保留的外來資料。
+        assertTrue(HistoryCodec.isHistoryKey("hist.01.at"))
+        assertFalse(HistoryCodec.isHistoryKey("Title"))
     }
 
     @Test

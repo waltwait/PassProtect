@@ -13,6 +13,12 @@ interface VaultFile {
     fun write(bytes: ByteArray)
     fun lastModified(): Long
 
-    /** 在同一目錄寫出一個附帶後綴的檔案，回傳實際檔名。用於衝突副本。 */
+    /**
+     * 在同一目錄寫出一個附帶後綴的檔案，回傳實際檔名。用於衝突副本。
+     *
+     * 實作**絕不可覆蓋既有檔案**——撞名時必須自行找一個未使用的新檔名再寫入，
+     * 並回傳實際使用的那個名字（可能與 [suffix] 拼出的名字不同）。
+     * `VaultRepository` 的整個「絕不覆蓋外部改動」保證構築在這個前提上。
+     */
     fun writeSibling(suffix: String, bytes: ByteArray): String
 }

@@ -34,6 +34,11 @@ class VaultRepository(
 
     /**
      * @param loadedStamp 上次 [load]（或上次成功 [save]）時的指紋。
+     *
+     * 若檔案在載入後被外部刪除，`file.read()` 會直接擲出例外——這種情況下
+     * 不會走到衝突分支、不會寫出 `*.conflict-*.kdbx`，本地版本目前沒有
+     * 被保留。呼叫端遇到例外時應自行把 [bytes] 存到別處，不能假設這個
+     * 函式在任何失敗路徑下都會保留本地版本。
      */
     fun save(bytes: ByteArray, loadedStamp: FileStamp): SaveResult {
         val current = FileStamp.of(file.read(), file.lastModified())
@@ -43,6 +48,12 @@ class VaultRepository(
         }
 
         // 備份必須在寫入之前。寫到一半失敗時，這是唯一的救援路徑。
+        //
+        // 這裡刻意「重新讀一次」而不是複用上面 current 比對時已經讀過的
+        // 位元組：如果外部改動剛好卡在比對之後、寫入之前這個極窄的窗口，
+        // 這次重讀會把外部的新內容存進備份——救得回來；若改成複用舊的
+        // current，備份存的會是已經不存在的舊內容，外部改動就真的丟了。
+        // 這個重讀是刻意的緩解手段，不是能刪掉的重複程式碼。
         backups.put(file.read())
         file.write(bytes)
         return SaveResult.Saved(FileStamp.of(bytes, file.lastModified()))

@@ -23,6 +23,16 @@ object HistoryCodec {
     private const val PREFIX = "hist."
     private val KEY_PATTERN = Regex("""^hist\.(\d+)\.(at|hint)$""")
 
+    /**
+     * 是否為本 codec 會處理的 history 欄位鍵值，例如 `hist.1.at`。
+     *
+     * [Vault.upsert] 清除舊 history 欄位時要用這個而非鬆散的字首比對——
+     * 否則使用者手動加在 KeePassXC 上、湊巧以 "hist." 開頭但格式不同的
+     * 屬性（例如 `hist.note`）會被本 app 每次編輯時當垃圾清掉，違反
+     * 「本 app 不認識的內容原樣保留」這個核心設計承諾。
+     */
+    fun isHistoryKey(key: String): Boolean = KEY_PATTERN.matches(key)
+
     fun encode(history: List<HistoricalHint>): Map<String, String> =
         history.sortedByDescending { it.at }
             .take(MAX_ENTRIES)

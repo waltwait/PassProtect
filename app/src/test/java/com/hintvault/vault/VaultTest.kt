@@ -208,15 +208,37 @@ class VaultTest {
 
     @Test
     fun neverCarriesForwardAKdfWeakerThanTheFloor() {
-        // 8 MiB 的檔（外部工具或手動編輯產生）不得讓本 app 寫出低於下限的 KDF
-        val weak = KdfParams(memoryMib = 8, iterations = 1, parallelism = 1)
-        val bytes = Vault.create(weak).serialize(pw())
+        // 8 MiB 的檔（外部工具或手動編輯產生）不得讓本 app 寫出低於下限的 KDF。
+        //
+        // 繞過 Vault.create()：它現在會把過弱的 kdf 夾到 FLOOR 才建檔（見
+        // Vault.create 的修正），所以要測「open() 讀到已經很弱的檔案時是否
+        // 還會夾」，必須直接用底層函式庫組一個真正低於下限的檔案，不能經過
+        // Vault.create()。
+        val header = KdbxHeader(4).apply {
+            keyDerivationFunction = Argon2.getInstance()
+            kdfParameters.putULong("M", 8L * 1024 * 1024)
+            kdfParameters.putULong("I", 1)
+            kdfParameters.putUInt("P", 1)
+        }
+        val out = ByteArrayOutputStream()
+        DomDatabaseWrapper().save(KdbxStreamFormat(header), KdbxCreds(pw().toUtf8Bytes()), out)
 
-        val params = Vault.open(bytes, pw()).kdfParamsForTest()
+        val params = Vault.open(out.toByteArray(), pw()).kdfParamsForTest()
 
         assertEquals(KdfParams.FLOOR.memoryMib, params.memoryMib)
         assertTrue(params.iterations >= KdfParams.FLOOR.iterations)
         assertTrue(params.parallelism >= KdfParams.FLOOR.parallelism)
+    }
+
+    @Test
+    fun createNeverWritesBelowTheSecurityFloor() {
+        // Vault.create() 現在也要夾——不能只信任呼叫端傳的參數
+        val weak = KdfParams(memoryMib = 8, iterations = 1, parallelism = 1)
+        val vault = Vault.create(weak)
+
+        assertEquals(KdfParams.FLOOR.memoryMib, vault.kdfParamsForTest().memoryMib)
+        assertTrue(vault.kdfParamsForTest().iterations >= KdfParams.FLOOR.iterations)
+        assertTrue(vault.kdfParamsForTest().parallelism >= KdfParams.FLOOR.parallelism)
     }
 
     @Test
@@ -262,6 +284,23 @@ class VaultTest {
         assertEquals("改過的提示", vault.entries().single().hint)
         assertTrue(vault.delete(listed.id))
         assertTrue(vault.entries().isEmpty())
+    }
+
+    @Test
+    fun upsertPreservesForeignAttributesThatMerelyStartWithHistPrefix() {
+        // 使用者可能在 KeePassXC 手動加一個湊巧以 "hist." 開頭、但格式不是
+        // hist.<n>.(at|hint) 的屬性。本 app 編輯這筆記錄時不該把它當成自己的
+        // history 欄位清掉——那是外來內容，「本 app 不認識的內容原樣保留」
+        // 是核心設計承諾。
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry()
+        vault.upsert(entry)
+        vault.setRawPropertyForTest(entry.id, "hist.note", "不是本 app 寫的")
+
+        vault.upsert(entry.copy(hint = "改過的提示"))
+
+        val raw = vault.rawEntryProperties(entry.id)
+        assertEquals("不是本 app 寫的", raw["hist.note"])
     }
 
     @Test

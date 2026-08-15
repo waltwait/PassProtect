@@ -40,6 +40,9 @@ class BiometricUnlock(
      * 一個用「已經不存在的金鑰」加密出來的檔案：格式完好、`store.get()` 讀
      * 得到，下一次 [unlock] 卻會在使用者按完指紋後才炸出 `AEADBadTagException`。
      * 先清空是安全的方向——最壞情況只是使用者被迫多輸入一次主密碼。
+     *
+     * [vaultKey] 的所有權留在呼叫端——本函式讀取它加密後就不再持有，
+     * 不會清空呼叫端的陣列。呼叫端用完後必須自己 wipe。
      */
     suspend fun enroll(vaultKey: ByteArray): Boolean {
         store.clear()
@@ -53,6 +56,10 @@ class BiometricUnlock(
     /**
      * @return 解包後的 vault key；使用者取消、驗證失敗、或密文本身已損毀時為 null。
      * @throws KeyPermanentlyInvalidException 金鑰已因生體特徵變更而作廢，須回退主密碼。
+     *
+     * 回傳的陣列是新配置的（來自 `Cipher.doFinal`），呼叫端自此擁有它的
+     * 生命週期，必須負責清空——通常是直接交給 `VaultSession.unlock()`，
+     * 它會在下一次解鎖或上鎖時清空。
      */
     suspend fun unlock(): ByteArray? {
         val wrapped = store.get() ?: return null

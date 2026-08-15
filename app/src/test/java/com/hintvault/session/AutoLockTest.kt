@@ -93,6 +93,28 @@ class AutoLockTest {
     }
 
     @Test
+    fun doesNotLockAtExactlyTheIdleDeadline() {
+        val (autoLock, clock, locks) = subject(AutoLockPolicy(idleTimeoutMillis = 60_000))
+        autoLock.onUserInteraction()
+
+        clock.now += 60_000  // 剛好等於門檻，不是超過
+        autoLock.tick()
+
+        assertEquals(0, locks())
+    }
+
+    @Test
+    fun doesNotLockAtExactlyTheGraceDeadline() {
+        val (autoLock, clock, locks) = subject(AutoLockPolicy(backgroundGraceMillis = 30_000))
+        autoLock.onEnterBackground()
+
+        clock.now += 30_000  // 剛好等於寬限期，不是超過
+        autoLock.tick()
+
+        assertEquals(0, locks())
+    }
+
+    @Test
     fun defaultPolicyMatchesSpec() {
         val policy = AutoLockPolicy()
         assertEquals(true, policy.lockOnBackground)

@@ -13,6 +13,12 @@ data class AutoLockPolicy(
  *
  * 時鐘以參數注入，讓時間相關的行為可用假時鐘窮舉測試，
  * 不必在測試裡真的等五分鐘。
+ *
+ * **僅限單一執行緒（主執行緒）呼叫**，理由與 `VaultSession` 相同：內部的
+ * `lastInteractionAt`/`backgroundedAt`/`alreadyLocked` 都是沒有同步保護的
+ * 一般欄位。若 [tick] 之類的方法從背景計時器執行緒呼叫，同時另一個執行緒
+ * 呼叫 [onUserInteraction]，兩者的狀態可能互相覆蓋出不一致的結果。
+ * 實際接上計時器時，callback 必須先切回主執行緒。
  */
 class AutoLock(
     private val policy: AutoLockPolicy,
