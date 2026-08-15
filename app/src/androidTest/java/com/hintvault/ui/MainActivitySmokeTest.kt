@@ -14,7 +14,8 @@ class MainActivitySmokeTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun launchesAndShowsPlaceholder() {
-        composeRule.onNodeWithText("Hint Vault").assertExists()
+    fun launchesAndShowsSetupOrUnlockScreen() {
+        // 全新安裝、沒有任何持久化的資料夾選擇 → 應落在首次設定畫面。
+        composeRule.onNodeWithText("選擇資料夾").assertExists()
     }
 }

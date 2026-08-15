@@ -3,9 +3,9 @@ package com.hintvault.ui
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.fragment.app.FragmentActivity
 
 /**
@@ -14,6 +14,8 @@ import androidx.fragment.app.FragmentActivity
  * androidx.activity.ComponentActivity 的子類，setContent {} 一樣能用。
  */
 class MainActivity : FragmentActivity() {
+
+    private val viewModel: VaultViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,8 +30,7 @@ class MainActivity : FragmentActivity() {
         setContent {
             MaterialTheme {
                 Surface {
-                    // Task 16 會換成 HintVaultApp(viewModel) 真正的導覽圖。
-                    Text("Hint Vault")
+                    HintVaultApp(viewModel)
                 }
             }
         }
