@@ -2228,23 +2228,35 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     var hint by remember { mutableStateOf(existing?.hint.orEmpty()) }
     val uiState by viewModel.uiState.collectAsState()
 
+    // VaultViewModel 沒有「用完就清掉 saveMessage」的機制，所以這個畫面一進來，
+    // uiState.saveMessage 可能還留著上一次別的畫面（例如 DetailScreen 的刪除、
+    // 或這個畫面自己上一次的存檔）留下的舊值。若只憑 saveMessage 本身的型別判斷
+    // 是否要導覽/顯示衝突訊息，畫面一開就會誤把舊訊息當成「這次」存檔的結果——
+    // 輕則是新增畫面一開就自己跳走，重則是把不相干的舊衝突訊息掛在使用者根本
+    // 還沒碰過的這筆記錄上。用 didAttemptSave 這個畫面自己的旗標擋住：只有在
+    // 這次畫面存活期間真的按過「儲存」，才理會 saveMessage 的變化。
+    var didAttemptSave by remember { mutableStateOf(false) }
+
     // 只在成功存檔時離開這個畫面；SaveMessage.Conflict 時必須留在原地，
     // 讓使用者看到規格 §4.4 要求的衝突訊息，不可靜默導覽走。
     LaunchedEffect(uiState.saveMessage) {
-        if (uiState.saveMessage is SaveMessage.Saved) {
+        if (didAttemptSave && uiState.saveMessage is SaveMessage.Saved) {
             navController.popBackStack()
         }
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text(if (existing == null) "新增" else "編輯") }) }) { padding ->
         Column(Modifier.padding(padding)) {
-            (uiState.saveMessage as? SaveMessage.Conflict)?.let {
-                Text("修改已存到另一個檔案（${it.conflictFileName}），同步資料夾裡的本尊沒有被動到，請到 KeePassXC 手動合併")
+            if (didAttemptSave) {
+                (uiState.saveMessage as? SaveMessage.Conflict)?.let {
+                    Text("修改已存到另一個檔案（${it.conflictFileName}），同步資料夾裡的本尊沒有被動到，請到 KeePassXC 手動合併")
+                }
             }
             OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("標題") })
             OutlinedTextField(value = hint, onValueChange = { hint = it }, label = { Text("提示") })
             Button(
                 onClick = {
+                    didAttemptSave = true
                     val entry = Entry(
                         id = existing?.id ?: UUID.randomUUID(),
                         title = title,
