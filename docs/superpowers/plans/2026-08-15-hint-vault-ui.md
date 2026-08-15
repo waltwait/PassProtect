@@ -1670,33 +1670,41 @@ Expected: 編譯失敗
         // 設定畫面會直接呼叫這個函式）。用同一個 persistMutex：若這個呼叫與
         // saveEntry/deleteEntry 幾乎同時發生，兩者都在動同一份 loadedStamp 與同一個檔案，
         // 必須互斥，理由與 Task 7 的 persist() 完全相同——stamp 的讀取也同樣搬到鎖裡面。
-        val vault = session.withVault { it }
+        //
+        // vault.serialize()/repo.save() 都可能拋例外（例如檔案被外部刪除，見
+        // VaultRepository.load() 的說明）；若沒接住就直接讓例外往外傳，newPassword
+        // 會被漏清。理由與寫法都同 attemptUnlock()：catch CancellationException 原樣
+        // 重丟（不能把「協程被取消」誤判成別的錯誤狀態），其餘都在 finally 裡清空，
+        // 保證不論哪條路徑離開都只清空一次。
+        val vault = try {
+            session.withVault { it }
+        } catch (e: Exception) {
+            newPassword.wipe()
+            throw e
+        }
         viewModelScope.launch {
-            val repo = repository
-            if (repo == null) {
-                newPassword.wipe()
-                return@launch
-            }
-            persistMutex.withLock {
-                val stamp = loadedStamp
-                if (stamp == null) {
-                    newPassword.wipe()
-                    return@withLock
-                }
-                val bytes = withContext(unlockDispatcher) { vault.serialize(newPassword) }
-                when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
-                    is SaveResult.Saved -> {
-                        loadedStamp = result.newStamp
-                        cacheMasterPassword(newPassword)
-                        if (uiState.value.biometricEnabled && biometric != null) {
-                            enrollBiometric(biometric)
+            try {
+                val repo = repository ?: return@launch
+                persistMutex.withLock {
+                    val stamp = loadedStamp ?: return@withLock
+                    val bytes = withContext(unlockDispatcher) { vault.serialize(newPassword) }
+                    when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                        is SaveResult.Saved -> {
+                            loadedStamp = result.newStamp
+                            cacheMasterPassword(newPassword)
+                            if (uiState.value.biometricEnabled && biometric != null) {
+                                enrollBiometric(biometric)
+                            }
+                            _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
                         }
-                        _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
-                    }
-                    is SaveResult.Conflict -> {
-                        _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
+                        is SaveResult.Conflict -> {
+                            _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
+                        }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } finally {
                 newPassword.wipe()
             }
         }
