@@ -52,3 +52,32 @@ fun CharArray.toUtf8Bytes(): ByteArray {
     out.array().fill(0)
     return bytes
 }
+
+/**
+ * UTF-8 解碼且不經過 String，理由與 [toUtf8Bytes] 相同：String 不可變、
+ * 無法歸零。
+ *
+ * 預先配置 `size` 個 char 的緩衝區：UTF-8 每個 byte 最多解出 1 個 char
+ * （單一 ASCII byte 對應 1 char；多 byte 序列則對應更少 char），因此輸出
+ * 的 char 數量必然不超過輸入的 byte 數量，`size` 保證足夠、不會觸發緩衝區
+ * 擴充。這與 [toUtf8Bytes] 選擇 `size * 3` 是同一個理由的鏡像版本：中途
+ * 擴充會讓被丟棄的舊緩衝區裝著明文卻清不掉。
+ *
+ * `ByteBuffer.wrap(this)` 直接包住呼叫端傳入的陣列，不複製——呼叫端的
+ * 陣列本身要不要清空是呼叫端的責任，這裡不動它，對稱於 [toUtf8Bytes]
+ * 用 `CharBuffer.wrap(this)` 時同樣不清空呼叫端的 CharArray。
+ */
+fun ByteArray.toUtf8CharArray(): CharArray {
+    val out = CharBuffer.allocate(size)
+    val decoder = StandardCharsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPLACE)
+        .onUnmappableCharacter(CodingErrorAction.REPLACE)
+    decoder.decode(ByteBuffer.wrap(this), out, true)
+    decoder.flush(out)
+
+    val chars = CharArray(out.position())
+    out.flip()
+    out.get(chars)
+    out.array().fill('\u0000')
+    return chars
+}

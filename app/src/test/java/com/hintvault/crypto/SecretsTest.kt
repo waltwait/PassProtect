@@ -71,4 +71,24 @@ class SecretsTest {
         assertArrayEquals(expected, actual)
         assertTrue("不可截斷", actual.size > 2)
     }
+
+    @Test
+    fun toUtf8CharArrayDecodesMultibyteCorrectly() {
+        val bytes = "提示".toByteArray(Charsets.UTF_8)
+        assertArrayEquals("提示".toCharArray(), bytes.toUtf8CharArray())
+    }
+
+    @Test
+    fun toUtf8CharArrayRoundTripsWithToUtf8Bytes() {
+        val original = "提示：貓咪的生日 🔐".toCharArray()
+        val roundTripped = original.toUtf8Bytes().toUtf8CharArray()
+        assertArrayEquals(original, roundTripped)
+    }
+
+    @Test
+    fun toUtf8CharArrayHandlesLongCjkInputWithoutTruncation() {
+        val text = "提示".repeat(64)
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        assertArrayEquals(text.toCharArray(), bytes.toUtf8CharArray())
+    }
 }
