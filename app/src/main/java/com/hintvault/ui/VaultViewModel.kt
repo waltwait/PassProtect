@@ -214,13 +214,17 @@ class VaultViewModel : ViewModel() {
 
     fun unlockWithBiometric(biometric: BiometricUnlock) {
         viewModelScope.launch {
+            _uiState.update { it.copy(isUnlocking = true, unlockError = null) }
             val passwordBytes = try {
                 biometric.unlock()
             } catch (e: KeyPermanentlyInvalidException) {
                 _uiState.update { it.copy(biometricEnabled = false, unlockError = UnlockError.BIOMETRIC_INVALIDATED) }
                 null
             }
-            if (passwordBytes == null) return@launch
+            if (passwordBytes == null) {
+                _uiState.update { it.copy(isUnlocking = false) }
+                return@launch
+            }
             val password = passwordBytes.toUtf8CharArray()
             passwordBytes.wipe()
             attemptUnlock(password)
@@ -233,6 +237,7 @@ class VaultViewModel : ViewModel() {
             masterPassword.wipe()
             return
         }
+        _uiState.update { it.copy(isUnlocking = true) }
         try {
             val loaded = withContext(unlockDispatcher) { repo.load() }
             val vault = withContext(unlockDispatcher) { Vault.open(loaded.bytes, masterPassword) }
@@ -244,13 +249,14 @@ class VaultViewModel : ViewModel() {
                     setup = SetupState.Ready,
                     lockState = LockState.Unlocked,
                     entries = vault.entries(),
-                    unlockError = null
+                    unlockError = null,
+                    isUnlocking = false
                 )
             }
         } catch (e: WrongPasswordException) {
-            _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD) }
+            _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD, isUnlocking = false) }
         } catch (e: UnsupportedVaultFormatException) {
-            _uiState.update { it.copy(unlockError = UnlockError.UNSUPPORTED_FORMAT) }
+            _uiState.update { it.copy(unlockError = UnlockError.UNSUPPORTED_FORMAT, isUnlocking = false) }
         } catch (e: CancellationException) {
             // CancellationException 是 Exception 的子類別，若被下面那個 catch (e: Exception)
             // 吃掉，viewModelScope 在 onCleared() 時取消協程就不會真的中止這個函式，
@@ -258,7 +264,7 @@ class VaultViewModel : ViewModel() {
             // 讓取消訊號正常往外傳播；finally 仍會執行，密碼還是會被清空。
             throw e
         } catch (e: Exception) {
-            _uiState.update { it.copy(unlockError = UnlockError.FILE_MISSING) }
+            _uiState.update { it.copy(unlockError = UnlockError.FILE_MISSING, isUnlocking = false) }
         } finally {
             masterPassword.wipe()
         }
@@ -382,7 +388,7 @@ class VaultViewModel : ViewModel() {
         session.lock()
         masterPasswordCache?.wipe()
         masterPasswordCache = null
-        _uiState.update { it.copy(lockState = LockState.Locked, entries = emptyList()) }
+        _uiState.update { it.copy(lockState = LockState.Locked, entries = emptyList(), isUnlocking = false) }
     }
 
     /** 解鎖成功後呼叫。先清舊快取再存新的一份——不留兩份明文密碼同時存在。 */

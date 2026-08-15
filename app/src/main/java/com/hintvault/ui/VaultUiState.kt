@@ -14,6 +14,7 @@ data class VaultUiState(
     val setup: SetupState = SetupState.CheckingFolder,
     val lockState: LockState = LockState.Locked,
     val unlockError: UnlockError? = null,
+    val isUnlocking: Boolean = false,
     val entries: List<Entry> = emptyList(),
     val biometricEnabled: Boolean = false,
     val autoLockPolicy: AutoLockPolicy = AutoLockPolicy(),

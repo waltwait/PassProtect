@@ -75,6 +75,23 @@ class VaultViewModelTest {
         assertEquals(LockState.Locked, vm.uiState.value.lockState)
     }
 
+    @Test
+    fun consecutiveWrongPasswordAttemptsResetsIsUnlockingFlag() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw("right"))
+        val vm = readyViewModel(bytes)
+
+        vm.unlockWithPassword(pw("wrong"))
+        val firstError = vm.uiState.value.unlockError
+        val firstIsUnlocking = vm.uiState.value.isUnlocking
+
+        vm.unlockWithPassword(pw("wrong"))
+
+        assertEquals(UnlockError.WRONG_PASSWORD, firstError)
+        assertEquals(false, firstIsUnlocking)
+        assertEquals(UnlockError.WRONG_PASSWORD, vm.uiState.value.unlockError)
+        assertEquals(false, vm.uiState.value.isUnlocking)
+    }
+
     /**
      * `Vault.kt` 的 `WrongPasswordException` KDoc 講得很明白：「密碼錯誤，或檔案
      * 損毀 / 非 KDBX」——`Vault.open()` 的 catch-all（除了「Unknown Cipher UUID」

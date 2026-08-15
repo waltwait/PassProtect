@@ -32,21 +32,15 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
     val activity = context as? FragmentActivity
     var usePassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
-    var isUnlocking by remember { mutableStateOf(false) }
 
     val biometric = remember(activity) {
-        activity?.let { BiometricUnlock(it, store = WrappedKeyStore(File(context.filesDir, "keys"))) }
+        activity?.let { BiometricUnlock(it, store = WrappedKeyStore(File(context.applicationContext.filesDir, "keys"))) }
     }
 
     LaunchedEffect(state.biometricEnabled, biometric, usePassword) {
         if (state.biometricEnabled && !usePassword && biometric != null) {
-            isUnlocking = true
             viewModel.unlockWithBiometric(biometric)
         }
-    }
-
-    LaunchedEffect(state.unlockError) {
-        if (state.unlockError != null) isUnlocking = false
     }
 
     Column(Modifier.padding(16.dp)) {
@@ -65,7 +59,6 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
                 label = { Text("主密碼") }, visualTransformation = PasswordVisualTransformation()
             )
             Button(onClick = {
-                isUnlocking = true
                 viewModel.unlockWithPassword(password.toCharArray())
                 password = ""
             }) { Text("解鎖") }
@@ -77,7 +70,7 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
 
         // 規格 §4.1：即使是生體辨識，實際開檔仍完整跑一次 Argon2d（約 2.2 秒），
         // 畫面必須顯示進度指示，不可看起來像卡住。
-        if (isUnlocking) {
+        if (state.isUnlocking) {
             CircularProgressIndicator()
         }
     }
