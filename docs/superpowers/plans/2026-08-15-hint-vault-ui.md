@@ -871,7 +871,7 @@ git commit -m "feat(crypto): ByteArray.toUtf8CharArray() — 生體辨識解鎖�
 - Create: `app/src/main/java/com/hintvault/ui/VaultUiState.kt`
 - Create: `app/src/main/java/com/hintvault/ui/VaultLocationPrefs.kt`
 - Create: `app/src/main/java/com/hintvault/ui/VaultViewModel.kt`
-- Create: `app/src/main/java/com/hintvault/ui/MainDispatcherRule.kt`
+- Create: `app/src/test/java/com/hintvault/ui/MainDispatcherRule.kt`（不是 `main`：它依賴 `org.junit.rules.TestWatcher`/`kotlinx.coroutines.test.*`，兩者都只在 `testImplementation` 才有，放進 `main` 會編不過）
 - Test: `app/src/test/java/com/hintvault/ui/VaultViewModelTest.kt`
 
 **Interfaces:**
@@ -960,6 +960,7 @@ class VaultLocationPrefs(context: Context) {
 ```kotlin
 package com.hintvault.ui
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -967,6 +968,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MainDispatcherRule : TestWatcher() {
     private val dispatcher = UnconfinedTestDispatcher()
 
@@ -1027,7 +1029,15 @@ class VaultViewModelTest {
         val file = FakeVaultFile(bytes)
         val repo = VaultRepository(file, FakeBackupStore())
         val stamp = FileStamp.of(bytes, file.lastModified())
-        return VaultViewModel().apply { setRepositoryForTest(repo, stamp) }
+        return VaultViewModel().apply {
+            setRepositoryForTest(repo, stamp)
+            // MainDispatcherRule 只替換 Dispatchers.Main；attemptUnlock() 內部另外
+            // withContext(Dispatchers.Default) 切到真正的執行緒池做 KDF 運算，
+            // 那個切換不受 UnconfinedTestDispatcher 控制，測試斷言會在協程真正
+            // 跑完之前就跑到下一行。用同一個 seam 換成 Dispatchers.Unconfined，
+            // 讓整條協程留在呼叫端執行緒上同步跑完。
+            setUnlockDispatcherForTest(kotlinx.coroutines.Dispatchers.Unconfined)
+        }
     }
 
     @Test
@@ -1054,12 +1064,15 @@ class VaultViewModelTest {
     }
 
     @Test
-    fun unlockWithGarbageBytesSetsUnsupportedOrFileMissingButNotWrongPassword() = runTest {
+    fun unlockWithGarbageBytesSetsWrongPasswordError() = runTest {
+        // Vault.open() 對完全不是 KDBX 的輸入，實際丟出的正是 WrongPasswordException——
+        // 見 Vault.kt 的 WrongPasswordException KDoc：「密碼錯誤，或檔案損毀 / 非 KDBX」。
+        // 不是含糊帶過的猜測，是函式庫的真實 catch-all 行為。
         val vm = readyViewModel("not a kdbx file at all".toByteArray())
 
         vm.unlockWithPassword(pw())
 
-        assertTrue(vm.uiState.value.unlockError != UnlockError.WRONG_PASSWORD)
+        assertEquals(UnlockError.WRONG_PASSWORD, vm.uiState.value.unlockError)
     }
 
     @Test
@@ -1122,7 +1135,7 @@ class VaultViewModelTest {
 }
 ```
 
-（`unlockWithGarbageBytesSetsUnsupportedOrFileMissingButNotWrongPassword` 之所以不精確斷言是哪一種錯誤：`Vault.open()` 對「完全不是 KDBX」的輸入實際丟出的例外型別取決於函式庫內部解析在哪一步失敗，核心引擎規格已把它歸類為 `WrongPasswordException`（見 `Vault.kt` 的 `WrongPasswordException` KDoc：「密碼錯誤，或檔案損毀 / 非 KDBX」）。這裡真正要保護的性質是「不會誤判成別的東西」，不是穿透到函式庫內部細節。）
+（`unlockWithGarbageBytesSetsWrongPasswordError`：`Vault.open()` 對「完全不是 KDBX」的輸入，實際丟出的就是 `WrongPasswordException`——`Vault.kt` 的 catch-all 只把「Unknown Cipher UUID」這個特定情況分流到 `UnsupportedVaultFormatException`，其餘一律包成 `WrongPasswordException`。斷言應直接比對這個結果，不需要（也不應該）用排除法含糊帶過。）
 
 - [ ] **Step 5: 執行測試，確認因為 `VaultViewModel` 不存在而編譯失敗**
 
@@ -1160,6 +1173,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1177,6 +1191,16 @@ class VaultViewModel : ViewModel() {
     private var repository: VaultRepository? = null
     private var loadedStamp: FileStamp? = null
     private var masterPasswordCache: CharArray? = null
+
+    /**
+     * `attemptUnlock()` 把 Argon2 運算切到這個 dispatcher 上跑，離開主執行緒。
+     * 注入而非寫死 `Dispatchers.Default`，理由與 `AutoLock` 注入 `now: () -> Long`
+     * 相同：`kotlinx-coroutines-test` 的 `UnconfinedTestDispatcher` 只替換
+     * `Dispatchers.Main`，`Dispatchers.Default` 不受它控制——寫死的話，JVM 測試裡
+     * `unlockWithPassword()` 呼叫後協程會被丟到真正的背景執行緒池，下一行斷言
+     * 會在協程真正跑完之前就執行，測出間歇性失敗。
+     */
+    private var unlockDispatcher: CoroutineDispatcher = Dispatchers.Default
 
     // ---- 首次設定 / 資料夾偵測 ----
 
@@ -1300,8 +1324,8 @@ class VaultViewModel : ViewModel() {
             return
         }
         try {
-            val loaded = withContext(Dispatchers.Default) { repo.load() }
-            val vault = withContext(Dispatchers.Default) { Vault.open(loaded.bytes, masterPassword) }
+            val loaded = withContext(unlockDispatcher) { repo.load() }
+            val vault = withContext(unlockDispatcher) { Vault.open(loaded.bytes, masterPassword) }
             loadedStamp = loaded.stamp
             cacheMasterPassword(masterPassword)
             session.unlock(vault)
@@ -1356,13 +1380,17 @@ class VaultViewModel : ViewModel() {
     internal fun forceSetupStateForTest(setup: SetupState) {
         _uiState.update { it.copy(setup = setup) }
     }
+
+    internal fun setUnlockDispatcherForTest(dispatcher: CoroutineDispatcher) {
+        unlockDispatcher = dispatcher
+    }
 }
 ```
 
 - [ ] **Step 7: 執行測試，確認全部通過**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "com.hintvault.ui.VaultViewModelTest"`
-Expected: PASS（8 個測試）
+Expected: PASS（7 個測試）
 
 - [ ] **Step 8: Commit**
 
@@ -1370,7 +1398,7 @@ Expected: PASS（8 個測試）
 git add app/src/main/java/com/hintvault/ui/VaultUiState.kt \
     app/src/main/java/com/hintvault/ui/VaultLocationPrefs.kt \
     app/src/main/java/com/hintvault/ui/VaultViewModel.kt \
-    app/src/main/java/com/hintvault/ui/MainDispatcherRule.kt \
+    app/src/test/java/com/hintvault/ui/MainDispatcherRule.kt \
     app/src/test/java/com/hintvault/ui/VaultViewModelTest.kt
 git commit -m "feat(ui): VaultViewModel — 首次設定與解鎖流程"
 ```
@@ -1496,7 +1524,7 @@ Expected: 編譯失敗
 - [ ] **Step 4: 執行測試，確認全部通過**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "com.hintvault.ui.VaultViewModelTest"`
-Expected: PASS（11 個測試）
+Expected: PASS（10 個測試）
 
 - [ ] **Step 5: Commit**
 
@@ -1642,7 +1670,7 @@ Expected: 編譯失敗
 - [ ] **Step 4: 執行測試，確認全部通過**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "com.hintvault.ui.VaultViewModelTest"`
-Expected: PASS（14 個測試）
+Expected: PASS（13 個測試）
 
 - [ ] **Step 5: 執行整個 JVM 測試套件，確認沒有破壞既有測試**
 
