@@ -1442,7 +1442,13 @@ git commit -m "feat(ui): VaultViewModel — 首次設定與解鎖流程"
         val bytes = Vault.create(fastKdf).serialize(pw())
         val file = FakeVaultFile(bytes)
         val repo = VaultRepository(file, FakeBackupStore())
-        val vm = VaultViewModel().apply { setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified())) }
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            // 這裡沒有走 readyViewModel()，要自己補上這個 seam，理由同 readyViewModel()
+            // 內的註解：persist() 現在也透過 unlockDispatcher 跑，不換掉的話這個測試會
+            // 在協程真正跑完之前就讀到 uiState。
+            setUnlockDispatcherForTest(kotlinx.coroutines.Dispatchers.Unconfined)
+        }
         vm.unlockWithPassword(pw())
 
         // 外部（模擬同步工具）在解鎖之後改了檔案
@@ -1457,6 +1463,10 @@ git commit -m "feat(ui): VaultViewModel — 首次設定與解鎖流程"
         vm.saveEntry(entry)
 
         assertTrue(vm.uiState.value.saveMessage is SaveMessage.Conflict)
+        // 「沒有把這筆改動弄丟」不能只看訊息種類，記憶體中的 vault（entries 來源）
+        // 也必須還看得到這筆——upsert() 是直接改記憶體中的 Vault，衝突只影響存檔，
+        // 不影響已經做的修改是否還在。
+        assertTrue(vm.uiState.value.entries.any { it.title == "conflict-test" })
     }
 
     @Test
@@ -1487,27 +1497,29 @@ Expected: 編譯失敗
 
 加在 `lock()` 之前，並在檔案頂端補 `import com.hintvault.storage.SaveResult`、`import com.hintvault.vault.Entry`、`import java.util.UUID`：
 
+`Vault.serialize()` 跑的是同一顆 Argon2 KDF（~2 秒等級），與 Task 6 的 `attemptUnlock()` 完全同等級的耗時操作。若 `persist()` 寫成一般同步函式，之後 Task 13 的編輯畫面在按下「儲存」時會直接卡住主執行緒 2 秒——這正是 Task 6 引入 `unlockDispatcher` 這個注入點所要避免的同一類問題，這裡必須套用一致的處理，而不是重新發明或忽略：
+
 ```kotlin
     // ---- 清單 / CRUD ----
 
     fun saveEntry(entry: Entry) {
         val vault = session.withVault { it }
         vault.upsert(entry)
-        persist(vault)
+        viewModelScope.launch { persist(vault) }
     }
 
     fun deleteEntry(id: UUID) {
         val vault = session.withVault { it }
         vault.delete(id)
-        persist(vault)
+        viewModelScope.launch { persist(vault) }
     }
 
-    private fun persist(vault: Vault) {
+    private suspend fun persist(vault: Vault) {
         val password = masterPasswordCache ?: return
         val repo = repository ?: return
         val stamp = loadedStamp ?: return
-        val bytes = vault.serialize(password)
-        when (val result = repo.save(bytes, stamp)) {
+        val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
+        when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
             is SaveResult.Saved -> {
                 loadedStamp = result.newStamp
                 _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
@@ -1574,7 +1586,10 @@ git commit -m "feat(ui): VaultViewModel — 新增/編輯/刪除與衝突處理"
         val bytes = Vault.create(fastKdf).serialize(pw("old-password"))
         val file = FakeVaultFile(bytes)
         val repo = VaultRepository(file, FakeBackupStore())
-        val vm = VaultViewModel().apply { setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified())) }
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(kotlinx.coroutines.Dispatchers.Unconfined)
+        }
         vm.unlockWithPassword(pw("old-password"))
 
         vm.changeMasterPassword(pw("new-password"), biometric = null)
@@ -1642,28 +1657,33 @@ Expected: 編譯失敗
      * 這個風險最高步驟的處理方式：不是額外清除，而是靠重新 enroll 自然取代。
      */
     fun changeMasterPassword(newPassword: CharArray, biometric: BiometricUnlock?) {
+        // 同 Task 7 的 persist()：vault.serialize() 是同一顆 Argon2 KDF，必須離開呼叫端
+        // 執行緒，走同一個 unlockDispatcher seam，不能同步跑在呼叫端（之後 Task 15 的
+        // 設定畫面會直接呼叫這個函式）。
         val vault = session.withVault { it }
-        val repo = repository
-        val stamp = loadedStamp
-        if (repo == null || stamp == null) {
-            newPassword.wipe()
-            return
-        }
-        val bytes = vault.serialize(newPassword)
-        when (val result = repo.save(bytes, stamp)) {
-            is SaveResult.Saved -> {
-                loadedStamp = result.newStamp
-                cacheMasterPassword(newPassword)
-                if (uiState.value.biometricEnabled && biometric != null) {
-                    enrollBiometric(biometric)
+        viewModelScope.launch {
+            val repo = repository
+            val stamp = loadedStamp
+            if (repo == null || stamp == null) {
+                newPassword.wipe()
+                return@launch
+            }
+            val bytes = withContext(unlockDispatcher) { vault.serialize(newPassword) }
+            when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                is SaveResult.Saved -> {
+                    loadedStamp = result.newStamp
+                    cacheMasterPassword(newPassword)
+                    if (uiState.value.biometricEnabled && biometric != null) {
+                        enrollBiometric(biometric)
+                    }
+                    _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
                 }
-                _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
+                is SaveResult.Conflict -> {
+                    _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
+                }
             }
-            is SaveResult.Conflict -> {
-                _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
-            }
+            newPassword.wipe()
         }
-        newPassword.wipe()
     }
 ```
 

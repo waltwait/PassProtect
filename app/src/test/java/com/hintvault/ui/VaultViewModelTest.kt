@@ -191,6 +191,7 @@ class VaultViewModelTest {
         vm.saveEntry(entry)
 
         assertTrue(vm.uiState.value.saveMessage is SaveMessage.Conflict)
+        assertTrue(vm.uiState.value.entries.any { it.title == "conflict-test" })
     }
 
     @Test

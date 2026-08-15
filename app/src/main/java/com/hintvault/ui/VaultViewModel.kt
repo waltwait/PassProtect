@@ -262,21 +262,21 @@ class VaultViewModel : ViewModel() {
     fun saveEntry(entry: Entry) {
         val vault = session.withVault { it }
         vault.upsert(entry)
-        persist(vault)
+        viewModelScope.launch { persist(vault) }
     }
 
     fun deleteEntry(id: UUID) {
         val vault = session.withVault { it }
         vault.delete(id)
-        persist(vault)
+        viewModelScope.launch { persist(vault) }
     }
 
-    private fun persist(vault: Vault) {
+    private suspend fun persist(vault: Vault) {
         val password = masterPasswordCache ?: return
         val repo = repository ?: return
         val stamp = loadedStamp ?: return
-        val bytes = vault.serialize(password)
-        when (val result = repo.save(bytes, stamp)) {
+        val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
+        when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
             is SaveResult.Saved -> {
                 loadedStamp = result.newStamp
                 _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
