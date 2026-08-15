@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -77,6 +79,7 @@ class VaultViewModel : ViewModel() {
     private var repository: VaultRepository? = null
     private var loadedStamp: FileStamp? = null
     private var masterPasswordCache: CharArray? = null
+    private val persistMutex = Mutex()
 
     /**
      * 執行 KDF 等 CPU 密集運算的背景 dispatcher。
@@ -274,16 +277,18 @@ class VaultViewModel : ViewModel() {
     private suspend fun persist(vault: Vault) {
         val password = masterPasswordCache ?: return
         val repo = repository ?: return
-        val stamp = loadedStamp ?: return
-        val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
-        when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
-            is SaveResult.Saved -> {
-                loadedStamp = result.newStamp
-                _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
-            }
-            is SaveResult.Conflict -> {
-                _uiState.update {
-                    it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+        persistMutex.withLock {
+            val stamp = loadedStamp ?: return@withLock
+            val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
+            when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                is SaveResult.Saved -> {
+                    loadedStamp = result.newStamp
+                    _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
+                }
+                is SaveResult.Conflict -> {
+                    _uiState.update {
+                        it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+                    }
                 }
             }
         }
