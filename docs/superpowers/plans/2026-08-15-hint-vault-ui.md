@@ -897,6 +897,14 @@ data class VaultUiState(
     val setup: SetupState = SetupState.CheckingFolder,
     val lockState: LockState = LockState.Locked,
     val unlockError: UnlockError? = null,
+    /**
+     * 解鎖中（跑 Argon2 或等生體辨識）的畫面用來顯示進度指示，避免看起來像卡住。
+     * 刻意放在這裡由 ViewModel 明確管理每個結束路徑，而不是讓畫面自己用
+     * `LaunchedEffect(unlockError)` 之類的方式從其他狀態的變化去推——那種做法在
+     * 「使用者取消生體辨識」（unlockError 不變）或「連續兩次同一種錯誤」
+     * （enum 值沒變，Compose 不會重新觸發 effect）這兩種情況下都會讓指示器卡住轉不停。
+     */
+    val isUnlocking: Boolean = false,
     val entries: List<Entry> = emptyList(),
     val biometricEnabled: Boolean = false,
     val autoLockPolicy: AutoLockPolicy = AutoLockPolicy(),
@@ -1169,6 +1177,7 @@ import com.hintvault.storage.VaultUriPermissions
 import com.hintvault.vault.UnsupportedVaultFormatException
 import com.hintvault.vault.Vault
 import com.hintvault.vault.WrongPasswordException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -1302,15 +1311,26 @@ class VaultViewModel : ViewModel() {
         viewModelScope.launch { attemptUnlock(masterPassword) }
     }
 
+    /**
+     * `isUnlocking` 由這裡（以及 [attemptUnlock]）明確管理每一條結束路徑，不讓畫面自己
+     * 用 `LaunchedEffect(unlockError)` 之類的方式從別的狀態變化去推——那種做法在
+     * 「使用者取消生體辨識」（`unlockError` 不變）與「連續兩次同一種錯誤」
+     * （enum 值沒變，Compose 不會重新觸發 effect）這兩種情況下都會讓進度指示器卡住轉不停，
+     * 是 Task 10 review 抓到的真實 bug，不是假設性風險。
+     */
     fun unlockWithBiometric(biometric: BiometricUnlock) {
         viewModelScope.launch {
+            _uiState.update { it.copy(isUnlocking = true, unlockError = null) }
             val passwordBytes = try {
                 biometric.unlock()
             } catch (e: KeyPermanentlyInvalidException) {
                 _uiState.update { it.copy(biometricEnabled = false, unlockError = UnlockError.BIOMETRIC_INVALIDATED) }
                 null
             }
-            if (passwordBytes == null) return@launch
+            if (passwordBytes == null) {
+                _uiState.update { it.copy(isUnlocking = false) }
+                return@launch
+            }
             val password = passwordBytes.toUtf8CharArray()
             passwordBytes.wipe()
             attemptUnlock(password)
@@ -1323,6 +1343,7 @@ class VaultViewModel : ViewModel() {
             masterPassword.wipe()
             return
         }
+        _uiState.update { it.copy(isUnlocking = true) }
         try {
             val loaded = withContext(unlockDispatcher) { repo.load() }
             val vault = withContext(unlockDispatcher) { Vault.open(loaded.bytes, masterPassword) }
@@ -1334,15 +1355,18 @@ class VaultViewModel : ViewModel() {
                     setup = SetupState.Ready,
                     lockState = LockState.Unlocked,
                     entries = vault.entries(),
-                    unlockError = null
+                    unlockError = null,
+                    isUnlocking = false
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: WrongPasswordException) {
-            _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD) }
+            _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD, isUnlocking = false) }
         } catch (e: UnsupportedVaultFormatException) {
-            _uiState.update { it.copy(unlockError = UnlockError.UNSUPPORTED_FORMAT) }
+            _uiState.update { it.copy(unlockError = UnlockError.UNSUPPORTED_FORMAT, isUnlocking = false) }
         } catch (e: Exception) {
-            _uiState.update { it.copy(unlockError = UnlockError.FILE_MISSING) }
+            _uiState.update { it.copy(unlockError = UnlockError.FILE_MISSING, isUnlocking = false) }
         } finally {
             masterPassword.wipe()
         }
@@ -1352,7 +1376,7 @@ class VaultViewModel : ViewModel() {
         session.lock()
         masterPasswordCache?.wipe()
         masterPasswordCache = null
-        _uiState.update { it.copy(lockState = LockState.Locked, entries = emptyList()) }
+        _uiState.update { it.copy(lockState = LockState.Locked, entries = emptyList(), isUnlocking = false) }
     }
 
     private fun cacheMasterPassword(masterPassword: CharArray) {
@@ -1900,21 +1924,22 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
     val activity = context as? FragmentActivity
     var usePassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
-    var isUnlocking by remember { mutableStateOf(false) }
 
     val biometric = remember(activity) {
-        activity?.let { BiometricUnlock(it, store = WrappedKeyStore(File(context.filesDir, "keys"))) }
-    }
-
-    LaunchedEffect(state.biometricEnabled, biometric, usePassword) {
-        if (state.biometricEnabled && !usePassword && biometric != null) {
-            isUnlocking = true
-            viewModel.unlockWithBiometric(biometric)
+        activity?.let {
+            BiometricUnlock(it, store = WrappedKeyStore(File(context.applicationContext.filesDir, "keys")))
         }
     }
 
-    LaunchedEffect(state.unlockError) {
-        if (state.unlockError != null) isUnlocking = false
+    // 進度指示的開關（state.isUnlocking）完全交給 VaultViewModel 管理，畫面自己不猜。
+    // 舊版曾經在這裡用本地 var + LaunchedEffect(unlockError) 推斷「該不該還亮著」，
+    // 但使用者取消生體辨識時 unlockError 不會變、連續兩次同一種錯誤時 enum 值也不會變，
+    // 兩種情況下 Compose 都不會重新觸發 effect，指示器就卡住轉不停——這是 Task 10 review
+    // 抓到的真實 bug，修法是把這個信號整個搬到 ViewModel 側，不再由畫面自己推斷。
+    LaunchedEffect(state.biometricEnabled, biometric, usePassword) {
+        if (state.biometricEnabled && !usePassword && biometric != null) {
+            viewModel.unlockWithBiometric(biometric)
+        }
     }
 
     Column(Modifier.padding(16.dp)) {
@@ -1933,7 +1958,6 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
                 label = { Text("主密碼") }, visualTransformation = PasswordVisualTransformation()
             )
             Button(onClick = {
-                isUnlocking = true
                 viewModel.unlockWithPassword(password.toCharArray())
                 password = ""
             }) { Text("解鎖") }
@@ -1945,7 +1969,7 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
 
         // 規格 §4.1：即使是生體辨識，實際開檔仍完整跑一次 Argon2d（約 2.2 秒），
         // 畫面必須顯示進度指示，不可看起來像卡住。
-        if (isUnlocking) {
+        if (state.isUnlocking) {
             CircularProgressIndicator()
         }
     }
