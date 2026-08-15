@@ -211,4 +211,46 @@ class VaultViewModelTest {
 
         assertTrue(vm.uiState.value.entries.isEmpty())
     }
+
+    @Test
+    fun setAutoLockTimeoutUpdatesPolicy() = runTest {
+        val vm = VaultViewModel()
+        vm.setAutoLockTimeout(15 * 60_000L)
+        assertEquals(15 * 60_000L, vm.uiState.value.autoLockPolicy.idleTimeoutMillis)
+    }
+
+    @Test
+    fun changeMasterPasswordReserializesAndSaves() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw("old-password"))
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw("old-password"))
+
+        vm.changeMasterPassword(pw("new-password"), biometric = null)
+
+        assertEquals(SaveMessage.Saved, vm.uiState.value.saveMessage)
+    }
+
+    @Test
+    fun changeMasterPasswordThenReopeningWithNewPasswordWorks() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw("old-password"))
+        val file = FakeVaultFile(bytes)
+        val repo = VaultRepository(file, FakeBackupStore())
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(kotlinx.coroutines.Dispatchers.Unconfined)
+        }
+        vm.unlockWithPassword(pw("old-password"))
+
+        vm.changeMasterPassword(pw("new-password"), biometric = null)
+
+        // 舊密碼開不起來了，新密碼開得起來——直接用底層 Vault.open 驗證存檔內容本身
+        var threwWithOldPassword = false
+        try {
+            Vault.open(file.content, pw("old-password"))
+        } catch (_: com.hintvault.vault.WrongPasswordException) {
+            threwWithOldPassword = true
+        }
+        assertTrue(threwWithOldPassword)
+        Vault.open(file.content, pw("new-password")) // 不拋例外即為成功
+    }
 }

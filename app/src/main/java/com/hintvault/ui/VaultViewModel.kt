@@ -7,8 +7,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hintvault.crypto.BiometricUnlock
 import com.hintvault.crypto.KeyPermanentlyInvalidException
+import com.hintvault.crypto.KeystoreKeys
+import com.hintvault.crypto.WrappedKeyStore
+import com.hintvault.crypto.toUtf8Bytes
 import com.hintvault.crypto.toUtf8CharArray
 import com.hintvault.crypto.wipe
+import com.hintvault.session.AutoLockPolicy
 import com.hintvault.session.LockState
 import com.hintvault.session.VaultSession
 import com.hintvault.storage.BackupStore
@@ -290,6 +294,84 @@ class VaultViewModel : ViewModel() {
                         it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
                     }
                 }
+            }
+        }
+    }
+
+    // ---- 設定 ----
+
+    /**
+     * 前提：`masterPasswordCache` 非 null，代表本次 session 已經用主密碼
+     * 或生體辨識成功解鎖過一次——規格 §4.6「必須先以主密碼手動解鎖一次，
+     * 才能啟用生體辨識」在這裡是自動滿足的，因為兩條解鎖路徑（Task 6）
+     * 都會先寫入這個欄位。
+     *
+     * `BiometricUnlock` 本身無法在 JVM 環境下實際觸發 `BiometricPrompt`，
+     * 因此本函式的真實行為只在真機/模擬器上驗證（見 docs/manual-verification.md）。
+     */
+    fun enrollBiometric(biometric: BiometricUnlock) {
+        val password = masterPasswordCache ?: return
+        viewModelScope.launch {
+            val bytes = password.toUtf8Bytes()
+            val success = try {
+                biometric.enroll(bytes)
+            } finally {
+                bytes.wipe()
+            }
+            if (success) _uiState.update { it.copy(biometricEnabled = true) }
+        }
+    }
+
+    fun disableBiometric(context: Context) {
+        KeystoreKeys().deleteKey()
+        WrappedKeyStore(keyDir(context)).clear()
+        _uiState.update { it.copy(biometricEnabled = false) }
+    }
+
+    fun setAutoLockTimeout(millis: Long) {
+        _uiState.update { it.copy(autoLockPolicy = it.autoLockPolicy.copy(idleTimeoutMillis = millis)) }
+    }
+
+    /**
+     * 若已啟用生體辨識，[biometric] 不可為 null——重新呼叫 `enroll()` 會用
+     * 新密碼蓋掉包裝檔（`BiometricUnlock.enroll()` 內部一開始就 `store.clear()`），
+     * 這是規格 §4.6 點名「忘了同步更新會導致生體辨識解鎖用舊密碼失敗」
+     * 這個風險最高步驟的處理方式：不是額外清除，而是靠重新 enroll 自然取代。
+     */
+    fun changeMasterPassword(newPassword: CharArray, biometric: BiometricUnlock?) {
+        // 同 Task 7 的 persist()：vault.serialize() 是同一顆 Argon2 KDF，必須離開呼叫端
+        // 執行緒，走同一個 unlockDispatcher seam，不能同步跑在呼叫端（之後 Task 15 的
+        // 設定畫面會直接呼叫這個函式）。用同一個 persistMutex：若這個呼叫與
+        // saveEntry/deleteEntry 幾乎同時發生，兩者都在動同一份 loadedStamp 與同一個檔案，
+        // 必須互斥，理由與 Task 7 的 persist() 完全相同——stamp 的讀取也同樣搬到鎖裡面。
+        val vault = session.withVault { it }
+        viewModelScope.launch {
+            val repo = repository
+            if (repo == null) {
+                newPassword.wipe()
+                return@launch
+            }
+            persistMutex.withLock {
+                val stamp = loadedStamp
+                if (stamp == null) {
+                    newPassword.wipe()
+                    return@withLock
+                }
+                val bytes = withContext(unlockDispatcher) { vault.serialize(newPassword) }
+                when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                    is SaveResult.Saved -> {
+                        loadedStamp = result.newStamp
+                        cacheMasterPassword(newPassword)
+                        if (uiState.value.biometricEnabled && biometric != null) {
+                            enrollBiometric(biometric)
+                        }
+                        _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
+                    }
+                    is SaveResult.Conflict -> {
+                        _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
+                    }
+                }
+                newPassword.wipe()
             }
         }
     }
