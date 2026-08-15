@@ -14,7 +14,12 @@ class VaultHealthCheck(
 
     sealed interface Result {
         data object Healthy : Result
-        data class RecoverableFromBackup(val backupBytes: ByteArray) : Result
+        data class RecoverableFromBackup(val backupBytes: ByteArray) : Result {
+            // ByteArray 在 data class 中是參考相等，需自行實作
+            override fun equals(other: Any?): Boolean =
+                other is RecoverableFromBackup && backupBytes.contentEquals(other.backupBytes)
+            override fun hashCode(): Int = backupBytes.contentHashCode()
+        }
         data object Unrecoverable : Result
     }
 
