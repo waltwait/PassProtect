@@ -22,6 +22,7 @@ import com.hintvault.storage.VaultUriPermissions
 import com.hintvault.vault.UnsupportedVaultFormatException
 import com.hintvault.vault.Vault
 import com.hintvault.vault.WrongPasswordException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,10 +36,22 @@ import java.io.File
 /**
  * 首次設定與解鎖流程的狀態機（Task 7 會加存檔/刪除，Task 8 會加設定）。
  *
- * **不持有 [Context]**：所有需要它的操作（挑資料夾、建立 [SafVaultFile]）
- * 都把 `Context` 當參數傳入對應函式，而非建構子欄位或 `private val` 快取。
- * 這讓本類別可以用無參數建構子在 JVM 測試裡直接 `VaultViewModel()`，
- * 不需要 Robolectric 或任何 Android 框架。
+ * **不持有 Context-dependent 物件**：所有需要 [Context] 的操作（挑資料夾、建立
+ * [SafVaultFile]）都把 `Context` 當參數傳入對應函式，而非建構子欄位或
+ * `private val` 快取。這讓本類別可以用無參數建構子在 JVM 測試裡直接
+ * `VaultViewModel()`，不需要 Robolectric 或任何 Android 框架。
+ *
+ * 更嚴格的是：真正被快取進 [file]/[directory] 欄位的 [SafVaultFile]/
+ * [DocumentFile] 物件，內部都持有它們建構時拿到的 `Context`。實際呼叫端
+ * （Task 16 的 `HintVaultApp`，透過 Compose 的 `LocalContext.current`）給的
+ * 是 Activity Context，不是 Application——若直接拿它去建構 `SafVaultFile`/
+ * `DocumentFile.fromTreeUri()`，快取下來的欄位就等於讓本 ViewModel 間接
+ * 持有一個 Activity，在設定變更（旋轉螢幕）後這個 Activity 已經被銷毀，
+ * ViewModel 卻還活著、還握著它——典型的 ViewModel-holds-Activity 洩漏。
+ * 因此每個收 [Context] 參數的函式，第一件事就是呼叫
+ * `context.applicationContext` 換成 Application Context，讓任何後續由它
+ * 建構、可能被快取的物件永遠只持有活得比 Activity 久的那個 Context，不論
+ * 呼叫端實際傳進來的是什麼。
  *
  * **主密碼快取**：`Vault.serialize()` 每次存檔都需要主密碼——KeePassJava2
  * 沒有「已經解鎖過、之後存檔不用再給密碼」這種介面。若不快取，使用者每編輯
@@ -79,26 +92,28 @@ class VaultViewModel : ViewModel() {
     // ---- 首次設定 / 資料夾偵測 ----
 
     fun checkExistingSetup(context: Context) {
-        val biometricEnabled = com.hintvault.crypto.WrappedKeyStore(keyDir(context)).exists()
+        val appContext = context.applicationContext
+        val biometricEnabled = com.hintvault.crypto.WrappedKeyStore(keyDir(appContext)).exists()
         _uiState.update { it.copy(biometricEnabled = biometricEnabled) }
 
-        val location = VaultLocationPrefs(context).get()
-        if (location == null || !VaultUriPermissions.isStillGranted(context, location.treeUri)) {
+        val location = VaultLocationPrefs(appContext).get()
+        if (location == null || !VaultUriPermissions.isStillGranted(appContext, location.treeUri)) {
             _uiState.update { it.copy(setup = SetupState.NeedsFolderPicker) }
             return
         }
-        val dir = DocumentFile.fromTreeUri(context, location.treeUri)
+        val dir = DocumentFile.fromTreeUri(appContext, location.treeUri)
         if (dir == null || dir.findFile(location.fileName) == null) {
             _uiState.update { it.copy(setup = SetupState.NeedsFolderPicker) }
             return
         }
         directory = dir
-        selectFile(context, dir, location.fileName)
+        selectFile(appContext, dir, location.fileName)
     }
 
     fun onFolderChosen(context: Context, treeUri: Uri) {
-        VaultUriPermissions.persist(context, treeUri)
-        val dir = DocumentFile.fromTreeUri(context, treeUri) ?: return
+        val appContext = context.applicationContext
+        VaultUriPermissions.persist(appContext, treeUri)
+        val dir = DocumentFile.fromTreeUri(appContext, treeUri) ?: return
         directory = dir
 
         val candidates = dir.listFiles().mapNotNull { it.name }.filter { it.endsWith(".kdbx") }
@@ -106,31 +121,33 @@ class VaultViewModel : ViewModel() {
             candidates.isEmpty() ->
                 _uiState.update { it.copy(setup = SetupState.NeedsNewVaultPassword) }
             candidates.size == 1 ->
-                selectFile(context, dir, candidates.single())
+                selectFile(appContext, dir, candidates.single())
             else ->
                 _uiState.update { it.copy(setup = SetupState.NeedsFileChoice(candidates)) }
         }
     }
 
     fun onFileChosen(context: Context, fileName: String) {
+        val appContext = context.applicationContext
         val dir = directory ?: return
-        selectFile(context, dir, fileName)
+        selectFile(appContext, dir, fileName)
     }
 
     fun onNewVaultPasswordChosen(context: Context, masterPassword: CharArray) {
+        val appContext = context.applicationContext
         val dir = directory ?: run { masterPassword.wipe(); return }
         val fileName = "vault.kdbx"
-        val newFile = SafVaultFile(context, dir, fileName)
+        val newFile = SafVaultFile(appContext, dir, fileName)
         val vault = Vault.create()
         val bytes = vault.serialize(masterPassword)
         newFile.create(bytes)
 
-        val backupStore = FileBackupStore(File(context.filesDir, "backups"))
+        val backupStore = FileBackupStore(File(appContext.filesDir, "backups"))
         file = newFile
         backups = backupStore
         repository = VaultRepository(newFile, backupStore)
         loadedStamp = FileStamp.of(bytes, newFile.lastModified())
-        VaultLocationPrefs(context).put(dir.uri, fileName)
+        VaultLocationPrefs(appContext).put(dir.uri, fileName)
 
         cacheMasterPassword(masterPassword)
         masterPassword.wipe()
@@ -150,13 +167,22 @@ class VaultViewModel : ViewModel() {
         _uiState.update { it.copy(setup = SetupState.Ready) }
     }
 
+    /**
+     * [context] 也在此再轉一次 [Context.getApplicationContext]，即使目前所有呼叫端
+     * 都已經轉過——這裡是最後一道防線：只要任何一個直接建立 [SafVaultFile]/
+     * [DocumentFile] 的地方漏轉，Activity Context 就會經由這兩個物件內部持有的
+     * 參照，被存進 [file]/[directory] 欄位，活得比 Activity 本身還久。轉換動作
+     * 冪等（對已經是 Application Context 的值再轉一次仍是它自己），因此在這裡
+     * 重複轉換沒有成本。
+     */
     private fun selectFile(context: Context, dir: DocumentFile, fileName: String) {
-        val safFile = SafVaultFile(context, dir, fileName)
-        val backupStore = FileBackupStore(File(context.filesDir, "backups"))
+        val appContext = context.applicationContext
+        val safFile = SafVaultFile(appContext, dir, fileName)
+        val backupStore = FileBackupStore(File(appContext.filesDir, "backups"))
         file = safFile
         backups = backupStore
         repository = VaultRepository(safFile, backupStore)
-        VaultLocationPrefs(context).put(dir.uri, fileName)
+        VaultLocationPrefs(appContext).put(dir.uri, fileName)
 
         when (val result = VaultHealthCheck(safFile, backupStore).check()) {
             VaultHealthCheck.Result.Healthy ->
@@ -168,7 +194,7 @@ class VaultViewModel : ViewModel() {
         }
     }
 
-    private fun keyDir(context: Context) = File(context.filesDir, "keys")
+    private fun keyDir(context: Context) = File(context.applicationContext.filesDir, "keys")
 
     // ---- 解鎖 ----
 
@@ -215,6 +241,12 @@ class VaultViewModel : ViewModel() {
             _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD) }
         } catch (e: UnsupportedVaultFormatException) {
             _uiState.update { it.copy(unlockError = UnlockError.UNSUPPORTED_FORMAT) }
+        } catch (e: CancellationException) {
+            // CancellationException 是 Exception 的子類別，若被下面那個 catch (e: Exception)
+            // 吃掉，viewModelScope 在 onCleared() 時取消協程就不會真的中止這個函式，
+            // 違反結構化並行的合作式取消合約。必須排在通用 catch 之前先攔截、重新丟出，
+            // 讓取消訊號正常往外傳播；finally 仍會執行，密碼還是會被清空。
+            throw e
         } catch (e: Exception) {
             _uiState.update { it.copy(unlockError = UnlockError.FILE_MISSING) }
         } finally {
