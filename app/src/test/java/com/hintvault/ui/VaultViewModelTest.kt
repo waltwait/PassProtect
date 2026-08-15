@@ -148,4 +148,66 @@ class VaultViewModelTest {
         assertEquals(SetupState.Ready, vm.uiState.value.setup)
         assertTrue(file.content.isEmpty())
     }
+
+    @Test
+    fun saveEntryPersistsAndUpdatesEntriesInState() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+
+        val entry = com.hintvault.vault.Entry(
+            id = java.util.UUID.randomUUID(),
+            title = "github.com",
+            hint = "提示",
+            modifiedAt = java.time.Instant.now()
+        )
+        vm.saveEntry(entry)
+
+        assertEquals(1, vm.uiState.value.entries.size)
+        assertEquals("github.com", vm.uiState.value.entries.single().title)
+        assertEquals(SaveMessage.Saved, vm.uiState.value.saveMessage)
+    }
+
+    @Test
+    fun saveEntryDetectsExternalConflictAndDoesNotLoseTheChange() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val file = FakeVaultFile(bytes)
+        val repo = VaultRepository(file, FakeBackupStore())
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(Dispatchers.Unconfined)
+        }
+        vm.unlockWithPassword(pw())
+
+        // 外部（模擬同步工具）在解鎖之後改了檔案
+        file.content = file.content + byteArrayOf(0)
+
+        val entry = com.hintvault.vault.Entry(
+            id = java.util.UUID.randomUUID(),
+            title = "conflict-test",
+            hint = "提示",
+            modifiedAt = java.time.Instant.now()
+        )
+        vm.saveEntry(entry)
+
+        assertTrue(vm.uiState.value.saveMessage is SaveMessage.Conflict)
+    }
+
+    @Test
+    fun deleteEntryRemovesItFromStateAndPersists() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+        val entry = com.hintvault.vault.Entry(
+            id = java.util.UUID.randomUUID(),
+            title = "to-delete",
+            hint = "提示",
+            modifiedAt = java.time.Instant.now()
+        )
+        vm.saveEntry(entry)
+
+        vm.deleteEntry(entry.id)
+
+        assertTrue(vm.uiState.value.entries.isEmpty())
+    }
 }

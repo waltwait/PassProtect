@@ -15,13 +15,16 @@ import com.hintvault.storage.BackupStore
 import com.hintvault.storage.FileBackupStore
 import com.hintvault.storage.FileStamp
 import com.hintvault.storage.SafVaultFile
+import com.hintvault.storage.SaveResult
 import com.hintvault.storage.VaultFile
 import com.hintvault.storage.VaultHealthCheck
 import com.hintvault.storage.VaultRepository
 import com.hintvault.storage.VaultUriPermissions
+import com.hintvault.vault.Entry
 import com.hintvault.vault.UnsupportedVaultFormatException
 import com.hintvault.vault.Vault
 import com.hintvault.vault.WrongPasswordException
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -251,6 +254,38 @@ class VaultViewModel : ViewModel() {
             _uiState.update { it.copy(unlockError = UnlockError.FILE_MISSING) }
         } finally {
             masterPassword.wipe()
+        }
+    }
+
+    // ---- 清單 / CRUD ----
+
+    fun saveEntry(entry: Entry) {
+        val vault = session.withVault { it }
+        vault.upsert(entry)
+        persist(vault)
+    }
+
+    fun deleteEntry(id: UUID) {
+        val vault = session.withVault { it }
+        vault.delete(id)
+        persist(vault)
+    }
+
+    private fun persist(vault: Vault) {
+        val password = masterPasswordCache ?: return
+        val repo = repository ?: return
+        val stamp = loadedStamp ?: return
+        val bytes = vault.serialize(password)
+        when (val result = repo.save(bytes, stamp)) {
+            is SaveResult.Saved -> {
+                loadedStamp = result.newStamp
+                _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
+            }
+            is SaveResult.Conflict -> {
+                _uiState.update {
+                    it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+                }
+            }
         }
     }
 
