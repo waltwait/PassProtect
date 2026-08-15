@@ -35,7 +35,7 @@
 
 - [ ] **Step 1: 加入 Compose 相關 Gradle 依賴與 plugin**
 
-把 `app/build.gradle.kts` 換成：
+把 `app/build.gradle.kts` 換成（`compileSdk = 37`：Task 1 實際執行時發現 `lifecycle-viewmodel-compose:2.11.0` 的 AAR metadata 要求 compileSdk ≥ 37，scratchpad 的 spike 專案只驗證了 Kotlin 編譯本身，沒有觸發這個 Android 應用模組層級的檢查；`targetSdk` 不受影響，維持 36）：
 
 ```kotlin
 plugins {
@@ -45,7 +45,7 @@ plugins {
 
 android {
     namespace = "com.hintvault"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.hintvault"
