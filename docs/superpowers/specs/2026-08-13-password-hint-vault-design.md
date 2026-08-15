@@ -102,6 +102,8 @@ ui/         Compose 畫面。
 
 **切分理由**：四層各對應一種失敗模式（金鑰導錯 / 格式解析錯 / 檔案覆蓋錯 / 金鑰滯留記憶體），可獨立測試與定位問題。`crypto` 與 `storage` 互不認識——前者不知道檔案存在，後者只看得到已加密位元組。
 
+**更正（2026-08-15，最終全分支審查發現）**：上面「`crypto` 不認識 KDBX，不認識 UI」的說法在實作後不再完全準確。`crypto/WrappedKeyStore.kt` 會做檔案 I/O（把包裝過的 vault key 存進 app 私有目錄），`crypto/BiometricUnlock.kt` 需要一個 `FragmentActivity` 來綁定 `BiometricPrompt`。這兩者都是刻意的：`WrappedKeyStore` 存取的是 app 私有目錄，不是使用者選的 SAF 檔案，性質上比較接近「金鑰的一部分」而非「vault 的資料檔」；`BiometricPrompt` 綁定 Activity 是 Android 生體辨識 API 的硬性要求，繞不開。跨層的**依賴方向**依然乾淨（`crypto` 不依賴 `storage` 或 `vault`），只是「完全不認識檔案／UI」這句話對 `crypto` 內部這兩個檔案不成立，需要更新認知而非改架構。
+
 ## 4. 加密與金鑰管理
 
 ### 4.1 金鑰階層
@@ -159,6 +161,10 @@ Argon2d 為資料相依（data-dependent），理論上較易受旁通道分析�
 
 - 內容加密採 **AES-256**（KDBX4 預設，相容性最佳）
 - ChaCha20 為可接受的替代選項，但非預設
+
+**已知取捨（2026-08-15，最終全分支審查發現）**：`Vault.serialize()` 目前無條件以 `KdbxHeader(4)` + AES 重新寫出檔案，不論開啟時讀到的原始格式為何。實際後果：桌面 KeePassXC 目前預設用 KDBX 3.1 / AES-KDF 建立資料庫（Task 12 互通驗收的實測結果），這種檔案只要被本 app 存過一次，就會被靜默升級成 KDBX 4 / Argon2d；若原始檔案用的是 ChaCha20，也會被換成 AES。
+
+格式從 3.1 升到 4、KDF 從 AES-KDF 換成 Argon2d，就安全性而言是升級不是降級，資料本身不會遺失（跨格式相容性已驗證）。真正的風險是：若使用者仰賴的其他工具只認 KDBX 3.1，這個檔案存過一次之後可能在那個工具上打不開——形同把「鎖住」的風險轉嫁到使用者依賴的其他舊工具上，而非本 app。目前沒有任何使用者可見的提示告知這件事發生了。UI 計畫應在「開啟一個非本 app 建立的資料庫，且即將第一次存檔」時提示使用者格式將被升級。
 
 ### 4.4 Android Keystore（生體辨識快速解鎖）
 
