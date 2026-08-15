@@ -1532,15 +1532,30 @@ Expected: 編譯失敗
      *  Vault 做 serialize()、或用過期的 loadedStamp 誤判成外部衝突。 */
     private val persistMutex = Mutex()
 
+    /**
+     * 開始一次新的存檔前，先把 `saveMessage` 清成 null。
+     *
+     * `SaveMessage.Saved` 是 `data object`（單例），如果連續兩次存檔都成功，
+     * 第二次寫入的 `Saved` 跟第一次是同一個值——`EditScreen` 用
+     * `LaunchedEffect(uiState.saveMessage)` 偵測這個值的變化來決定要不要導覽離開，
+     * 而 Compose 只在 key **真的變了**才會重新觸發 effect。若不清成 null，
+     * 第二筆存檔完成時 `saveMessage` 從 `Saved` 變成同一個 `Saved`，Compose 判斷
+     * 「沒變」，effect 不會重新觸發，畫面就卡住走不掉——這是 Task 18 端到端測試
+     * 連續新增兩筆記錄時抓到的真實 bug，不是假設性風險。清成 null 保證每次存檔
+     * 完成時，一定是「null → 真正的結果」這種貨真價實的變化，不論上一次存檔的
+     * 結果是什麼。
+     */
     fun saveEntry(entry: Entry) {
         val vault = session.withVault { it }
         vault.upsert(entry)
+        _uiState.update { it.copy(saveMessage = null) }
         viewModelScope.launch { persist(vault) }
     }
 
     fun deleteEntry(id: UUID) {
         val vault = session.withVault { it }
         vault.delete(id)
+        _uiState.update { it.copy(saveMessage = null) }
         viewModelScope.launch { persist(vault) }
     }
 
@@ -1700,12 +1715,17 @@ Expected: 編譯失敗
         // 會被漏清。理由與寫法都同 attemptUnlock()：catch CancellationException 原樣
         // 重丟（不能把「協程被取消」誤判成別的錯誤狀態），其餘都在 finally 裡清空，
         // 保證不論哪條路徑離開都只清空一次。
+        // 同 saveEntry/deleteEntry：saveMessage 是 data object 單例，連續兩次都成功
+        // 會是同一個 Saved 值，EditScreen（以及萬一之後有其他畫面）用來判斷「該不該
+        // 反應」的 LaunchedEffect key 偵測不到變化。這裡先清成 null，保證這次呼叫
+        // 結束時一定是「null → 真正的結果」的貨真價實變化。
         val vault = try {
             session.withVault { it }
         } catch (e: Exception) {
             newPassword.wipe()
             throw e
         }
+        _uiState.update { it.copy(saveMessage = null) }
         viewModelScope.launch {
             try {
                 val repo = repository ?: return@launch
