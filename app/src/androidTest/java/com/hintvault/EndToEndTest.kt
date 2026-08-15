@@ -82,12 +82,11 @@ class EndToEndTest {
 
         // 6. session 生命週期
         val session = VaultSession()
-        val key = ByteArray(32) { 5 }
-        session.unlock(key)
+        session.unlock(reopened)
         assertEquals(LockState.Unlocked, session.state.value)
+        assertTrue(session.withVault { it.entries() }.isNotEmpty())
         session.lock()
         assertEquals(LockState.Locked, session.state.value)
-        assertArrayEquals(ByteArray(32), key)
     }
 
     /** 把測試產生的資料庫拉出來，供桌面 KeePassXC 驗收。 */

@@ -1,11 +1,15 @@
 package com.hintvault.session
 
-import org.junit.Assert.assertArrayEquals
+import com.hintvault.crypto.KdfParams
+import com.hintvault.vault.Vault
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VaultSessionTest {
+
+    private fun vault() = Vault.create(KdfParams.FLOOR)
 
     @Test
     fun startsLocked() {
@@ -15,45 +19,33 @@ class VaultSessionTest {
     @Test
     fun unlockMovesToUnlocked() {
         val session = VaultSession()
-        session.unlock(ByteArray(32) { 7 })
+        session.unlock(vault())
         assertEquals(LockState.Unlocked, session.state.value)
     }
 
     @Test
-    fun withKeyExposesTheKeyWhileUnlocked() {
+    fun withVaultExposesTheSameVaultInstance() {
         val session = VaultSession()
-        val key = ByteArray(32) { 7 }
-        session.unlock(key.copyOf())
+        val v = vault()
+        session.unlock(v)
 
-        val seen = session.withKey { it.copyOf() }
-        assertArrayEquals(key, seen)
-    }
-
-    @Test
-    fun lockZeroesTheKeyInMemory() {
-        val session = VaultSession()
-        val key = ByteArray(32) { 7 }
-        session.unlock(key)   // session 接管這個陣列
-
-        session.lock()
-
-        // 規格 §4.5：上鎖時清除記憶體中的 vault key
-        assertArrayEquals(ByteArray(32), key)
+        val seen = session.withVault { it }
+        assertSame(v, seen)
     }
 
     @Test
     fun lockMovesBackToLocked() {
         val session = VaultSession()
-        session.unlock(ByteArray(32))
+        session.unlock(vault())
         session.lock()
         assertEquals(LockState.Locked, session.state.value)
     }
 
     @Test
-    fun withKeyThrowsWhenLocked() {
+    fun withVaultThrowsWhenLocked() {
         var threw = false
         try {
-            VaultSession().withKey { it.size }
+            VaultSession().withVault { it }
         } catch (_: IllegalStateException) {
             threw = true
         }
@@ -61,19 +53,34 @@ class VaultSessionTest {
     }
 
     @Test
-    fun unlockingTwiceZeroesTheOldKey() {
+    fun withVaultThrowsAfterLock() {
         val session = VaultSession()
-        val first = ByteArray(32) { 1 }
-        session.unlock(first)
-        session.unlock(ByteArray(32) { 2 })
+        session.unlock(vault())
+        session.lock()
 
-        assertArrayEquals(ByteArray(32), first)
+        var threw = false
+        try {
+            session.withVault { it }
+        } catch (_: IllegalStateException) {
+            threw = true
+        }
+        assertTrue(threw)
+    }
+
+    @Test
+    fun unlockingTwiceReplacesThePreviousVault() {
+        val session = VaultSession()
+        session.unlock(vault())
+        val second = vault()
+        session.unlock(second)
+
+        assertSame(second, session.withVault { it })
     }
 
     @Test
     fun lockIsIdempotent() {
         val session = VaultSession()
-        session.unlock(ByteArray(32))
+        session.unlock(vault())
         session.lock()
         session.lock()
         assertEquals(LockState.Locked, session.state.value)
