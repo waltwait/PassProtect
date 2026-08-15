@@ -18,7 +18,10 @@ import java.util.UUID
 
 class VaultTest {
 
-    // 單元測試用最小成本，只求功能正確；正式預設值由 KdfParams.DEFAULT 決定
+    // 單元測試希望用最小成本，只求功能正確；但 Vault.create() 現在會把低於
+    // KdfParams.FLOOR 的參數夾到 16 MiB（見 clampedToFloor()），所以這裡
+    // 實際套用的是 16 MiB，不是字面上寫的 8——仍比 DEFAULT 的 32 MiB 快，
+    // 只是不像數字看起來那麼小。正式預設值由 KdfParams.DEFAULT 決定。
     private val fastKdf = KdfParams(memoryMib = 8, iterations = 2, parallelism = 2)
 
     private fun pw() = "correct horse".toCharArray()
@@ -246,13 +249,16 @@ class VaultTest {
         // M < 1 MiB 會整數截斷成 0，BouncyCastle 會擲例外讓資料庫永久存不了。
         //
         // 偏離審查給的原始寫法之處：原本的 `KdfParams(memoryMib = 0, ...)` 這個
-        // 區域變數從未被用到——Vault.create()/serialize() 對「自己」的 kdf 沒有
-        // 夾制（夾制只發生在 open() 讀別人檔案時），所以 memoryMib=0 一旦真的
-        // 拿去 Vault.create(absurd).serialize(pw()) 會在「建立當下」就讓
-        // BouncyCastle 擲例外，根本到不了「開啟已存在的檔案」這個要測的路徑。
-        // 因此改為繞過 Vault，直接用底層函式庫組一個 M = 512 KiB（位元組數，
-        // 換算 MiB 時整數除法會截斷成 0）的檔案，這樣才是真正在跑
-        // kdfParamsOrDefault() 的夾制邏輯，而不是跑一個永遠不會執行的分支。
+        // 區域變數從未被用到——一開始寫這個測試時，Vault.create()/serialize()
+        // 對「自己」的 kdf 還沒有夾制（那時夾制只發生在 open() 讀別人檔案時），
+        // 所以 memoryMib=0 一旦真的拿去 Vault.create(absurd).serialize(pw())
+        // 會在「建立當下」就讓 BouncyCastle 擲例外，根本到不了「開啟已存在的
+        // 檔案」這個要測的路徑。（最終全分支審查之後，Vault.create() 現在也會
+        // 夾到 FLOOR 了，但這個測試繞過 Vault 直接組檔案，不受影響，本測試
+        // 寫法維持原樣。）因此改為繞過 Vault，直接用底層函式庫組一個
+        // M = 512 KiB（位元組數，換算 MiB 時整數除法會截斷成 0）的檔案，
+        // 這樣才是真正在跑 kdfParamsOrDefault() 的夾制邏輯，而不是跑一個
+        // 永遠不會執行的分支。
         val header = KdbxHeader(4).apply {
             keyDerivationFunction = Argon2.getInstance()
             kdfParameters.putULong("M", 512L * 1024) // 512 KiB：換成 MiB 會整數截斷成 0

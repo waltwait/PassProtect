@@ -19,9 +19,9 @@ data class HistoricalHint(val at: Instant, val hint: String) {
  * 刻意沒有「帳號」欄位——需要的話寫在 [title] 裡。
  * [hint] 對應 KDBX 的 Password 欄位，因為那是 KDBX 預設受 inner stream 保護的欄位。
  *
- * [modifiedAt] 建構時傳入的值只在建立新記錄時真的被採用；`Vault.upsert()`
- * 修改既有記錄時，這個時間是由底層函式庫寫入 entry 當下自動蓋成「現在」，
- * 呼叫端傳的值會被忽略——這是輸出欄位，不是輸入欄位。
+ * [modifiedAt] 建構時傳入的值在任何路徑都不被採用——不論是新建還是修改
+ * 既有記錄，`Vault.upsert()` 寫入時，這個時間都是由底層函式庫在寫入當下
+ * 自動蓋成「現在」，呼叫端傳的值一律被忽略。這是輸出欄位，不是輸入欄位。
  */
 data class Entry(
     val id: UUID,
