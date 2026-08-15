@@ -21,4 +21,12 @@ interface VaultFile {
      * `VaultRepository` 的整個「絕不覆蓋外部改動」保證構築在這個前提上。
      */
     fun writeSibling(suffix: String, bytes: ByteArray): String
+
+    /**
+     * 在目前的目錄與檔名建立新檔案。
+     *
+     * 實作**必須**在檔案已存在時拋出 [kotlin.io.FileAlreadyExistsException]，
+     * 不可覆蓋——理由與 [writeSibling] 的「絕不覆蓋」合約相同。
+     */
+    fun create(bytes: ByteArray)
 }

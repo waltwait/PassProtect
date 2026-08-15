@@ -102,4 +102,24 @@ class SafVaultFileTest {
     fun displayNameIsTheFileName() {
         assertEquals("saf-test.kdbx", subject().displayName)
     }
+
+    @Test
+    fun createWritesNewFileWithGivenContent() {
+        val name = "brand-new.kdbx"
+        SafVaultFile(context, directory, name).create("hello".toByteArray())
+        assertArrayEquals("hello".toByteArray(), File(dir, name).readBytes())
+    }
+
+    @Test
+    fun createThrowsWhenFileAlreadyExists() {
+        var threw = false
+        try {
+            subject().create("overwrite-attempt".toByteArray())
+        } catch (_: FileAlreadyExistsException) {
+            threw = true
+        }
+        assertTrue("已存在的檔案不可被 create() 覆蓋", threw)
+        // 原始內容必須完好無損
+        assertArrayEquals("v1".toByteArray(), File(dir, "saf-test.kdbx").readBytes())
+    }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
 import java.io.FileNotFoundException
 
 /**
@@ -64,6 +65,21 @@ class SafVaultFile(
         context.contentResolver.openOutputStream(created.uri, "wt")?.use { it.write(bytes) }
             ?: throw FileNotFoundException("無法寫入 $name")
         return created.name ?: name
+    }
+
+    /**
+     * 直接重用 [writeSibling] 已驗證過的「絕不覆蓋既有檔案」邏輯所在的同一個
+     * MIME type 常數，但語意不同：這裡撞名是**錯誤**而非該自動避開的情況，
+     * 因此不呼叫 [uniqueNameFor]，而是直接檢查、直接拋例外。
+     */
+    override fun create(bytes: ByteArray) {
+        if (directory.findFile(fileName) != null) {
+            throw FileAlreadyExistsException(File(fileName))
+        }
+        val created = directory.createFile(SIBLING_MIME_TYPE, fileName)
+            ?: throw FileNotFoundException("無法建立 $fileName")
+        context.contentResolver.openOutputStream(created.uri, "wt")?.use { it.write(bytes) }
+            ?: throw FileNotFoundException("無法寫入 $fileName")
     }
 
     /** 在目錄裡找一個還沒被用過的檔名，必要時在副檔名前插入遞增的數字，

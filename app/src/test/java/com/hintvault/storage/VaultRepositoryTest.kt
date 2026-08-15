@@ -11,7 +11,8 @@ class VaultRepositoryTest {
     private class FakeVaultFile(
         override val displayName: String = "vault.kdbx",
         var content: ByteArray = ByteArray(0),
-        var mtime: Long = 1000L
+        var mtime: Long = 1000L,
+        var exists: Boolean = true
     ) : VaultFile {
         val siblings = mutableMapOf<String, ByteArray>()
         var writeShouldFail = false
@@ -27,6 +28,11 @@ class VaultRepositoryTest {
             val name = "$displayName$suffix"
             siblings[name] = bytes
             return name
+        }
+        override fun create(bytes: ByteArray) {
+            if (exists) throw FileAlreadyExistsException(java.io.File(displayName))
+            content = bytes
+            exists = true
         }
 
         /** 模擬同步工具在背後換掉了檔案。 */
