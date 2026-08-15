@@ -1495,12 +1495,18 @@ Expected: 編譯失敗
 
 - [ ] **Step 3: 在 `VaultViewModel.kt` 加入 CRUD**
 
-加在 `lock()` 之前，並在檔案頂端補 `import com.hintvault.storage.SaveResult`、`import com.hintvault.vault.Entry`、`import java.util.UUID`：
+加在 `lock()` 之前，並在檔案頂端補 `import com.hintvault.storage.SaveResult`、`import com.hintvault.vault.Entry`、`import java.util.UUID`、`import kotlinx.coroutines.sync.Mutex`、`import kotlinx.coroutines.sync.withLock`：
 
-`Vault.serialize()` 跑的是同一顆 Argon2 KDF（~2 秒等級），與 Task 6 的 `attemptUnlock()` 完全同等級的耗時操作。若 `persist()` 寫成一般同步函式，之後 Task 13 的編輯畫面在按下「儲存」時會直接卡住主執行緒 2 秒——這正是 Task 6 引入 `unlockDispatcher` 這個注入點所要避免的同一類問題，這裡必須套用一致的處理，而不是重新發明或忽略：
+`Vault.serialize()` 跑的是同一顆 Argon2 KDF（~2 秒等級），與 Task 6 的 `attemptUnlock()` 完全同等級的耗時操作。若 `persist()` 寫成一般同步函式，之後 Task 13 的編輯畫面在按下「儲存」時會直接卡住主執行緒 2 秒——這正是 Task 6 引入 `unlockDispatcher` 這個注入點所要避免的同一類問題，這裡必須套用一致的處理，而不是重新發明或忽略。
+
+但改成非同步後有第二個問題必須一併處理：`saveEntry`/`deleteEntry` 用 `viewModelScope.launch` 各自起一個協程後立刻返回，若使用者（或之後 Task 13 的畫面）連續呼叫兩次，兩個協程的 `persist()` 可能同時在跑——`vault.serialize()` 在背景執行緒讀取同一個 `db`（DOM 樹）的同時，另一個呼叫的 `vault.upsert()`/`delete()` 可能正在主執行緒改它，而且第二個呼叫讀到的 `loadedStamp` 可能是第一個呼叫更新前的舊值，導致明明是自己存的檔卻被誤判成外部衝突。用一個 `Mutex` 把 `persist()` 的臨界區（讀 `loadedStamp`、`serialize`、`save`、更新 `loadedStamp`）包起來解決——`stamp` 的讀取必須搬到鎖裡面，確保讀到的是最新值：
 
 ```kotlin
     // ---- 清單 / CRUD ----
+
+    /** 序列化多個 saveEntry/deleteEntry/changeMasterPassword 呼叫，避免同時對同一個
+     *  Vault 做 serialize()、或用過期的 loadedStamp 誤判成外部衝突。 */
+    private val persistMutex = Mutex()
 
     fun saveEntry(entry: Entry) {
         val vault = session.withVault { it }
@@ -1517,16 +1523,18 @@ Expected: 編譯失敗
     private suspend fun persist(vault: Vault) {
         val password = masterPasswordCache ?: return
         val repo = repository ?: return
-        val stamp = loadedStamp ?: return
-        val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
-        when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
-            is SaveResult.Saved -> {
-                loadedStamp = result.newStamp
-                _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
-            }
-            is SaveResult.Conflict -> {
-                _uiState.update {
-                    it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+        persistMutex.withLock {
+            val stamp = loadedStamp ?: return@withLock
+            val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
+            when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                is SaveResult.Saved -> {
+                    loadedStamp = result.newStamp
+                    _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
+                }
+                is SaveResult.Conflict -> {
+                    _uiState.update {
+                        it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+                    }
                 }
             }
         }
@@ -1659,30 +1667,38 @@ Expected: 編譯失敗
     fun changeMasterPassword(newPassword: CharArray, biometric: BiometricUnlock?) {
         // 同 Task 7 的 persist()：vault.serialize() 是同一顆 Argon2 KDF，必須離開呼叫端
         // 執行緒，走同一個 unlockDispatcher seam，不能同步跑在呼叫端（之後 Task 15 的
-        // 設定畫面會直接呼叫這個函式）。
+        // 設定畫面會直接呼叫這個函式）。用同一個 persistMutex：若這個呼叫與
+        // saveEntry/deleteEntry 幾乎同時發生，兩者都在動同一份 loadedStamp 與同一個檔案，
+        // 必須互斥，理由與 Task 7 的 persist() 完全相同——stamp 的讀取也同樣搬到鎖裡面。
         val vault = session.withVault { it }
         viewModelScope.launch {
             val repo = repository
-            val stamp = loadedStamp
-            if (repo == null || stamp == null) {
+            if (repo == null) {
                 newPassword.wipe()
                 return@launch
             }
-            val bytes = withContext(unlockDispatcher) { vault.serialize(newPassword) }
-            when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
-                is SaveResult.Saved -> {
-                    loadedStamp = result.newStamp
-                    cacheMasterPassword(newPassword)
-                    if (uiState.value.biometricEnabled && biometric != null) {
-                        enrollBiometric(biometric)
+            persistMutex.withLock {
+                val stamp = loadedStamp
+                if (stamp == null) {
+                    newPassword.wipe()
+                    return@withLock
+                }
+                val bytes = withContext(unlockDispatcher) { vault.serialize(newPassword) }
+                when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                    is SaveResult.Saved -> {
+                        loadedStamp = result.newStamp
+                        cacheMasterPassword(newPassword)
+                        if (uiState.value.biometricEnabled && biometric != null) {
+                            enrollBiometric(biometric)
+                        }
+                        _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
                     }
-                    _uiState.update { it.copy(saveMessage = SaveMessage.Saved) }
+                    is SaveResult.Conflict -> {
+                        _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
+                    }
                 }
-                is SaveResult.Conflict -> {
-                    _uiState.update { it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName)) }
-                }
+                newPassword.wipe()
             }
-            newPassword.wipe()
         }
     }
 ```
