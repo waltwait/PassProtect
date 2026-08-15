@@ -30,24 +30,28 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     var title by remember { mutableStateOf(existing?.title.orEmpty()) }
     var hint by remember { mutableStateOf(existing?.hint.orEmpty()) }
     val uiState by viewModel.uiState.collectAsState()
+    var didAttemptSave by remember { mutableStateOf(false) }
 
     // 只在成功存檔時離開這個畫面；SaveMessage.Conflict 時必須留在原地，
     // 讓使用者看到規格 §4.4 要求的衝突訊息，不可靜默導覽走。
     LaunchedEffect(uiState.saveMessage) {
-        if (uiState.saveMessage is SaveMessage.Saved) {
+        if (didAttemptSave && uiState.saveMessage is SaveMessage.Saved) {
             navController.popBackStack()
         }
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text(if (existing == null) "新增" else "編輯") }) }) { padding ->
         Column(Modifier.padding(padding)) {
-            (uiState.saveMessage as? SaveMessage.Conflict)?.let {
-                Text("修改已存到另一個檔案（${it.conflictFileName}），同步資料夾裡的本尊沒有被動到，請到 KeePassXC 手動合併")
+            if (didAttemptSave) {
+                (uiState.saveMessage as? SaveMessage.Conflict)?.let {
+                    Text("修改已存到另一個檔案（${it.conflictFileName}），同步資料夾裡的本尊沒有被動到，請到 KeePassXC 手動合併")
+                }
             }
             OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("標題") })
             OutlinedTextField(value = hint, onValueChange = { hint = it }, label = { Text("提示") })
             Button(
                 onClick = {
+                    didAttemptSave = true
                     val entry = Entry(
                         id = existing?.id ?: UUID.randomUUID(),
                         title = title,
