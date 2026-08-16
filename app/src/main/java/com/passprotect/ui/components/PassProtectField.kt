@@ -21,7 +21,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,7 +32,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,9 +114,23 @@ fun PassProtectField(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
                 }
+                // BasicTextField 的純 String 版本，只要 value 是被「外部」改掉的
+                // （不是使用者自己打字，而是像常用提示詞 chip 那樣直接指定新字串），
+                // 游標就會被重置到最前面——這裡改成自己管一份 TextFieldValue，
+                // 偵測到外部改動時明確把游標擺到新文字的最後面，符合「點了提示詞、
+                // 接在後面」的直覺（游標理應跟著新接上去的字走，不是跳回開頭）。
+                var textFieldValue by remember {
+                    mutableStateOf(TextFieldValue(text = value, selection = TextRange(value.length)))
+                }
+                if (textFieldValue.text != value) {
+                    textFieldValue = TextFieldValue(text = value, selection = TextRange(value.length))
+                }
                 BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
+                    value = textFieldValue,
+                    onValueChange = { newValue ->
+                        textFieldValue = newValue
+                        if (newValue.text != value) onValueChange(newValue.text)
+                    },
                     enabled = enabled,
                     singleLine = singleLine,
                     visualTransformation = visualTransformation,
