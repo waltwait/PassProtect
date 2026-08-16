@@ -35,10 +35,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -112,21 +115,35 @@ private class AccountFieldState(val id: UUID, initialUsername: String, initialHi
     var hint by mutableStateOf(initialHint)
 }
 
+/**
+ * 點「搜尋網址」會導覽去 WebSearchScreen 再導覽回來——Navigation Compose
+ * 離開目前畫面時不會把它留在 composition 裡，回來時是重新組合一次，所有
+ * 沒有用 `rememberSaveable` 的 `remember` 狀態（標題、帳號清單…）都會被
+ * 重置回 `existing` 當初的值（新增畫面的話就是空字串），使用者剛打好的
+ * 標題就這樣憑空消失。改用 `rememberSaveable` 讓這些欄位撐過那趟往返。
+ */
+private val AccountFieldsSaver = listSaver<SnapshotStateList<AccountFieldState>, List<String>>(
+    save = { list -> list.map { listOf(it.id.toString(), it.username, it.hint) } },
+    restore = { saved ->
+        saved.map { AccountFieldState(UUID.fromString(it[0]), it[1], it[2]) }.toMutableStateList()
+    }
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
     val existing = entryId?.let { id -> entries.firstOrNull { it.id == id } }
-    var title by remember { mutableStateOf(existing?.title.orEmpty()) }
-    var url by remember { mutableStateOf(existing?.url.orEmpty()) }
-    var category by remember { mutableStateOf(existing?.category.orEmpty()) }
-    val accountFields = remember {
+    var title by rememberSaveable { mutableStateOf(existing?.title.orEmpty()) }
+    var url by rememberSaveable { mutableStateOf(existing?.url.orEmpty()) }
+    var category by rememberSaveable { mutableStateOf(existing?.category.orEmpty()) }
+    val accountFields = rememberSaveable(saver = AccountFieldsSaver) {
         val initial = existing?.accounts?.takeIf { it.isNotEmpty() }
             ?: listOf(Account(id = UUID.randomUUID(), hint = ""))
-        mutableStateListOf(*initial.map { AccountFieldState(it.id, it.username, it.hint) }.toTypedArray())
+        initial.map { AccountFieldState(it.id, it.username, it.hint) }.toMutableStateList()
     }
     val uiState by viewModel.uiState.collectAsState()
-    var didAttemptSave by remember { mutableStateOf(false) }
-    var categoryMenuExpanded by remember { mutableStateOf(false) }
+    var didAttemptSave by rememberSaveable { mutableStateOf(false) }
+    var categoryMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val existingCategories = remember(entries) {
         entries.map { it.category }.filter { it.isNotBlank() }.distinct().sorted()
     }
