@@ -13,9 +13,18 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.PassProtect"
         android:allowBackup="false">
+        <!--
+            adjustResize 是必要的，不只是錦上添花：沒有它，系統預設用舊式的
+            「整個視窗跟著鍵盤平移」（pan）行為，跟 Compose 畫面裡各個輸入框
+            自己用的 Modifier.imePadding() 互搶——兩邊都在動、算出來的位置對不
+            齊，鍵盤跳出來還是會蓋到一部分輸入框。設成 adjustResize 讓系統把
+            「鍵盤佔用多少高度」正確地透過 WindowInsets 交給 Compose 處理，
+            兩邊才不會打架。
+        -->
         <activity
             android:name=".ui.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
