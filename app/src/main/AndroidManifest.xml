@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        本 app 其餘部分完全離線；這是唯一用到網路的地方——編輯畫面的
+        「搜尋網址」功能嵌了一個 WebView 給使用者自己瀏覽找網址，密碼/提示
+        內容本身不會經過這個管道，也沒有任何背景網路存取。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="PassProtect"
         android:icon="@mipmap/ic_launcher"

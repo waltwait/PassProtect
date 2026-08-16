@@ -71,6 +71,16 @@ class VaultTest {
     }
 
     @Test
+    fun upsertWithUrlRoundTrips() {
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry().copy(url = "https://github.com")
+        vault.upsert(entry)
+
+        val reopened = Vault.open(vault.serialize(pw()), pw())
+        assertEquals("https://github.com", reopened.entries().single().url)
+    }
+
+    @Test
     fun upsertWithBlankCategoryStaysUncategorized() {
         val vault = Vault.create(fastKdf)
         vault.upsert(sampleEntry())

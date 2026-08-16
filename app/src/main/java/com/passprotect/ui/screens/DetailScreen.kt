@@ -1,15 +1,19 @@
 package com.passprotect.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -28,6 +32,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.VaultViewModel
@@ -39,6 +45,7 @@ import java.util.UUID
 fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
     val entry = entries.firstOrNull { it.id == entryId }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     if (entry == null) {
         Text("找不到這筆記錄，可能已被刪除")
@@ -71,6 +78,23 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
                         modifier = Modifier.padding(end = 8.dp)
                     )
                     Text("分類：${entry.category}")
+                }
+            }
+            if (entry.url.isNotBlank()) {
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(entry.url)))
+                        }
+                    }
+                ) {
+                    Icon(
+                        Icons.Filled.Language,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(entry.url, textDecoration = TextDecoration.Underline)
                 }
             }
             if (entry.account.isNotBlank()) {

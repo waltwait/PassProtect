@@ -55,6 +55,7 @@ class Vault private constructor(
     companion object {
         private const val PROP_TITLE = "Title"
         private const val PROP_USERNAME = "UserName"
+        private const val PROP_URL = "URL"
         private const val PROP_PASSWORD = "Password"
         private const val PROP_SNIPPETS_MARKER = "hv.snippets-marker"
 
@@ -149,6 +150,7 @@ class Vault private constructor(
         }
         target.setProperty(PROP_TITLE, entry.title)
         target.setProperty(PROP_USERNAME, entry.account)
+        target.setProperty(PROP_URL, entry.url)
         target.setProperty(PROP_PASSWORD, entry.hint)
 
         // 先清掉所有既有的 hist.<n>.(at|hint) 欄位，再寫入新的。
@@ -271,6 +273,7 @@ class Vault private constructor(
             id = domainId(),
             title = props[PROP_TITLE].orEmpty(),
             account = props[PROP_USERNAME].orEmpty(),
+            url = props[PROP_URL].orEmpty(),
             category = if (parentGroup == null || parentGroup.isRootGroup) "" else parentGroup.name.orEmpty(),
             hint = props[PROP_PASSWORD].orEmpty(),
             modifiedAt = lastModificationTime?.toInstant() ?: Instant.EPOCH,

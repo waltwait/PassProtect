@@ -21,6 +21,7 @@ import com.passprotect.ui.screens.ListScreen
 import com.passprotect.ui.screens.SettingsScreen
 import com.passprotect.ui.screens.SetupScreen
 import com.passprotect.ui.screens.UnlockScreen
+import com.passprotect.ui.screens.WebSearchScreen
 import java.util.UUID
 
 @Composable
@@ -70,6 +71,10 @@ fun PassProtectApp(viewModel: VaultViewModel) {
             HistoryScreen(id, uiState.entries, navController)
         }
         composable("settings") { SettingsScreen(uiState, navController, viewModel) }
+        composable("websearch/{query}") { backStackEntry ->
+            val query = backStackEntry.arguments?.getString("query").orEmpty()
+            WebSearchScreen(query, navController)
+        }
     }
 
     // 一旦設定完成且已解鎖，且目前停在 setup/unlock，導去清單。

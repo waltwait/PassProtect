@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -35,6 +36,7 @@ import com.passprotect.ui.SaveMessage
 import com.passprotect.ui.VaultViewModel
 import com.passprotect.vault.Entry
 import com.passprotect.vault.HistoricalHint
+import java.net.URLEncoder
 import java.time.Instant
 import java.util.UUID
 
@@ -58,6 +60,7 @@ internal fun entryToSave(
     existing: Entry?,
     title: String,
     account: String = existing?.account.orEmpty(),
+    url: String = existing?.url.orEmpty(),
     category: String = existing?.category.orEmpty(),
     hint: String,
     now: Instant = Instant.now()
@@ -71,6 +74,7 @@ internal fun entryToSave(
         id = existing?.id ?: UUID.randomUUID(),
         title = title,
         account = account,
+        url = url,
         category = category,
         hint = hint,
         modifiedAt = now,
@@ -84,6 +88,7 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     val existing = entryId?.let { id -> entries.firstOrNull { it.id == id } }
     var title by remember { mutableStateOf(existing?.title.orEmpty()) }
     var account by remember { mutableStateOf(existing?.account.orEmpty()) }
+    var url by remember { mutableStateOf(existing?.url.orEmpty()) }
     var category by remember { mutableStateOf(existing?.category.orEmpty()) }
     var hint by remember { mutableStateOf(existing?.hint.orEmpty()) }
     val uiState by viewModel.uiState.collectAsState()
@@ -97,6 +102,21 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     LaunchedEffect(uiState.saveMessage) {
         if (didAttemptSave && uiState.saveMessage is SaveMessage.Saved) {
             navController.popBackStack()
+        }
+    }
+
+    // 從 WebSearchScreen 帶回來的網址，經 SavedStateHandle 傳回——這是
+    // Navigation Compose「畫面 B 把結果交回畫面 A」的標準做法，不需要另外
+    // 設計一個跨畫面共用的暫存狀態。撿到就馬上從 SavedStateHandle 移除，
+    // 避免使用者之後隨便切一次頁又撿到同一個舊值。
+    val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
+    val pickedUrl = savedStateHandle
+        ?.getStateFlow<String?>(WEB_SEARCH_RESULT_KEY, null)
+        ?.collectAsState()
+    LaunchedEffect(pickedUrl?.value) {
+        pickedUrl?.value?.let {
+            url = it
+            savedStateHandle.remove<String>(WEB_SEARCH_RESULT_KEY)
         }
     }
 
@@ -131,6 +151,21 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                 value = title, onValueChange = { title = it }, label = { Text("標題") },
                 modifier = Modifier.fillMaxWidth()
             )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = url, onValueChange = { url = it }, label = { Text("網址（選填）") },
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = {
+                    val query = URLEncoder.encode(title.ifBlank { "" }, "UTF-8")
+                    navController.navigate("websearch/$query")
+                }) {
+                    Icon(Icons.Filled.Search, contentDescription = "搜尋網址")
+                }
+            }
             OutlinedTextField(
                 value = account, onValueChange = { account = it }, label = { Text("帳號（選填）") },
                 modifier = Modifier.fillMaxWidth()
@@ -176,7 +211,14 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                     onClick = {
                         didAttemptSave = true
                         viewModel.saveEntry(
-                            entryToSave(existing, title = title, account = account, category = category, hint = hint)
+                            entryToSave(
+                                existing,
+                                title = title,
+                                account = account,
+                                url = url,
+                                category = category,
+                                hint = hint
+                            )
                         )
                     },
                     enabled = title.isNotBlank()

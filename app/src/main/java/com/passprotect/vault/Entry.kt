@@ -19,6 +19,7 @@ data class HistoricalHint(val at: Instant, val hint: String) {
  * [account] 選填，對應 KDBX 標準的 UserName 欄位——跟 [title]/[hint] 一樣是
  * KeePass 原生就有的欄位，不是本 app 額外加的自訂屬性，KeePassXC 等桌面端
  * 開這個檔案時看到的也會是同一個「使用者名稱」欄位。
+ * [url] 選填，同理對應 KDBX 標準的 URL 欄位。
  * [hint] 對應 KDBX 的 Password 欄位，因為那是 KDBX 預設受 inner stream 保護的欄位。
  *
  * [category] 選填，對應 KDBX 原生的「群組」（Group）概念——一筆記錄只能屬於
@@ -35,6 +36,7 @@ data class Entry(
     val id: UUID,
     val title: String,
     val account: String = "",
+    val url: String = "",
     val category: String = "",
     val hint: String,
     val modifiedAt: Instant,
@@ -42,5 +44,5 @@ data class Entry(
 ) {
     /** 同 [HistoricalHint]：不讓提示內容進入任何字串化路徑。 */
     override fun toString(): String =
-        "Entry(id=$id, title=$title, account=<redacted>, category=$category, hint=<redacted>, modifiedAt=$modifiedAt, history=${history.size} 筆)"
+        "Entry(id=$id, title=$title, account=<redacted>, url=$url, category=$category, hint=<redacted>, modifiedAt=$modifiedAt, history=${history.size} 筆)"
 }
