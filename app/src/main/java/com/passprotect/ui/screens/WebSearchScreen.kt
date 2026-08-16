@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -73,7 +74,11 @@ fun WebSearchScreen(query: String, navController: NavController) {
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // 頁面裡的搜尋框是網頁本身（Google）畫的，不是 Compose 元件，但這層
+                // WebView 一樣要讓鍵盤把可用高度收小，網頁才會照著縮小後的視窗重排，
+                // 不會被鍵盤蓋住。
+                .imePadding(),
             factory = { context ->
                 WebView(context).apply {
                     settings.javaScriptEnabled = true

@@ -12,8 +12,8 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -209,18 +209,28 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
 }
 
 /**
- * Finder 式的資料夾格狀顯示：灰色資料夾圖示＋名稱，橫向排滿自動換行。
- * 不用樹狀線條、不用抽屜——資料夾就攤在主畫面上，點了直接換頁進去看內容。
+ * Finder 式的資料夾格狀顯示：灰色資料夾圖示＋名稱，固定一排三個。用三等分
+ * 欄位（每欄 weight(1f)）排版，不是靠 FlowRow 自動換行——這樣每個資料夾左右
+ * 兩側的留白永遠相等，不會因為名稱長短不一而擠成一團或留白不對稱；最後一排
+ * 不滿三個時，用等寬的空白 Spacer 補位，維持同一套三欄格線。
  */
 @Composable
 private fun CategoryFolderGrid(categories: List<String>, onSelect: (String) -> Unit) {
-    FlowRow(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        categories.forEach { name ->
-            CategoryFolderTile(name = name, onClick = { onSelect(name) })
+        categories.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth()) {
+                row.forEach { name ->
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        CategoryFolderTile(name = name, onClick = { onSelect(name) })
+                    }
+                }
+                repeat(3 - row.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
         }
     }
 }
@@ -229,10 +239,9 @@ private fun CategoryFolderGrid(categories: List<String>, onSelect: (String) -> U
 private fun CategoryFolderTile(name: String, onClick: () -> Unit) {
     Column(
         Modifier
-            .width(84.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 8.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
