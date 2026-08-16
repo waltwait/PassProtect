@@ -32,22 +32,27 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.outlined.VpnKeyOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -93,123 +98,152 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
             .sortedBy { it.title }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("提示保險庫") },
-                actions = {
-                    IconButton(onClick = {
-                        searchExpanded = !searchExpanded
-                        if (!searchExpanded) query = ""
-                    }) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = if (searchExpanded) "關閉搜尋" else "搜尋"
-                        )
-                    }
-                    IconButton(onClick = { viewModel.lock() }) {
-                        Icon(Icons.Default.Lock, contentDescription = "鎖定")
-                    }
-                    IconButton(onClick = { navController.navigate("settings") }) {
-                        Icon(Icons.Default.Settings, contentDescription = "設定")
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { navController.navigate("edit_new") }) {
-                Icon(Icons.Default.Add, contentDescription = "新增")
-            }
-        }
-    ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // 規格 §4.2 的慢速裝置提醒：建立資料庫成功後畫面已經切到這裡，
-            // SetupScreen 早就不在畫面上了，所以這句話得在這裡講。
-            uiState.setupError?.let { message ->
-                Text(message)
-                TextButton(onClick = { viewModel.clearSetupError() }) { Text("知道了") }
-            }
-            AnimatedVisibility(visible = searchExpanded) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("搜尋") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            searchExpanded = false
-                            query = ""
-                        }) {
-                            Icon(Icons.Default.Close, contentDescription = "關閉搜尋")
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(50),
-                    // Material3 OutlinedTextField 預設高度是 56dp，跟 PassProtectField
-                    // 統一用的 52dp 差 4dp——全 app 其他輸入框都是 52dp（EditScreen／
-                    // SetupScreen／UnlockScreen／SettingsScreen 共用同一個
-                    // PassProtectField 元件，天生一致），只有這個搜尋框是獨立的
-                    // OutlinedTextField，得自己補這行才會跟其他欄位一樣高。
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
+    // 分類樹改成側邊抽屜（點左上角漢堡選單才打開），不是常駐佔掉主畫面空間的
+    // 區塊——參考使用者給的筆記 app 截圖：那種「點選單看資料夾樹、選一個關掉
+    // 抽屜」的操作方式。選了分類後主畫面 TopAppBar 的標題會帶出目前篩選的
+    // 分類名稱，不用特地打開抽屜才知道現在篩的是哪個。
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text(
+                    "分類",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(16.dp)
                 )
-            }
-            if (categories.isNotEmpty()) {
                 CategoryTree(
                     categories = categories,
                     selectedCategory = selectedCategory,
-                    onSelect = { selectedCategory = it }
+                    onSelect = {
+                        selectedCategory = it
+                        drawerScope.launch { drawerState.close() }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp)
                 )
             }
-            if (filtered.isEmpty()) {
-                EmptyEntriesMessage(hasFilter = query.isNotBlank() || selectedCategory != null)
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(filtered, key = { it.id.toString() }) { entry ->
-                        SwipeActionsRow(
-                            onEdit = { navController.navigate("edit/${entry.id}") },
-                            onDelete = { viewModel.deleteEntry(entry.id) }
-                        ) {
-                            Card(
-                                onClick = { navController.navigate("detail/${entry.id}") },
-                                // 圓角形狀交給 SwipeActionsRow 最外層的 clip 統一處理（見那邊的
-                                // 註解）：卡片自己不裁圓角，收起來時外層 clip 剛好蓋出跟一般卡片
-                                // 一樣的四角圓角；拉開時卡片右邊界露出來的是直角接縫，不會有卡片
-                                // 自己裁出的圓角在拉開後卡在中間變成一個奇怪的浮動缺角。
-                                shape = androidx.compose.ui.graphics.RectangleShape,
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                                ),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-                                modifier = Modifier.fillMaxWidth()
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(if (selectedCategory != null) "提示保險庫 · $selectedCategory" else "提示保險庫")
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { drawerScope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.Menu, contentDescription = "分類")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            searchExpanded = !searchExpanded
+                            if (!searchExpanded) query = ""
+                        }) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = if (searchExpanded) "關閉搜尋" else "搜尋"
+                            )
+                        }
+                        IconButton(onClick = { viewModel.lock() }) {
+                            Icon(Icons.Default.Lock, contentDescription = "鎖定")
+                        }
+                        IconButton(onClick = { navController.navigate("settings") }) {
+                            Icon(Icons.Default.Settings, contentDescription = "設定")
+                        }
+                    }
+                )
+            },
+            floatingActionButton = {
+                FloatingActionButton(onClick = { navController.navigate("edit_new") }) {
+                    Icon(Icons.Default.Add, contentDescription = "新增")
+                }
+            }
+        ) { padding ->
+            Column(
+                Modifier
+                    .padding(padding)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 規格 §4.2 的慢速裝置提醒：建立資料庫成功後畫面已經切到這裡，
+                // SetupScreen 早就不在畫面上了，所以這句話得在這裡講。
+                uiState.setupError?.let { message ->
+                    Text(message)
+                    TextButton(onClick = { viewModel.clearSetupError() }) { Text("知道了") }
+                }
+                AnimatedVisibility(visible = searchExpanded) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("搜尋") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                searchExpanded = false
+                                query = ""
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "關閉搜尋")
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(50),
+                        // Material3 OutlinedTextField 預設高度是 56dp，跟 PassProtectField
+                        // 統一用的 52dp 差 4dp——全 app 其他輸入框都是 52dp（EditScreen／
+                        // SetupScreen／UnlockScreen／SettingsScreen 共用同一個
+                        // PassProtectField 元件，天生一致），只有這個搜尋框是獨立的
+                        // OutlinedTextField，得自己補這行才會跟其他欄位一樣高。
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                    )
+                }
+                if (filtered.isEmpty()) {
+                    EmptyEntriesMessage(hasFilter = query.isNotBlank() || selectedCategory != null)
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(filtered, key = { it.id.toString() }) { entry ->
+                            SwipeActionsRow(
+                                onEdit = { navController.navigate("edit/${entry.id}") },
+                                onDelete = { viewModel.deleteEntry(entry.id) }
                             ) {
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                Card(
+                                    onClick = { navController.navigate("detail/${entry.id}") },
+                                    // 圓角形狀交給 SwipeActionsRow 最外層的 clip 統一處理（見那邊的
+                                    // 註解）：卡片自己不裁圓角，收起來時外層 clip 剛好蓋出跟一般卡片
+                                    // 一樣的四角圓角；拉開時卡片右邊界露出來的是直角接縫，不會有卡片
+                                    // 自己裁出的圓角在拉開後卡在中間變成一個奇怪的浮動缺角。
+                                    shape = androidx.compose.ui.graphics.RectangleShape,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                    ),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Icon(
-                                        Icons.Filled.VpnKey,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Column {
-                                        Text(entry.title, style = MaterialTheme.typography.bodyLarge)
-                                        Text(
-                                            if (entry.category.isNotBlank()) entry.category
-                                            else entry.modifiedAt.toDisplayString(),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.VpnKey,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
                                         )
+                                        Column {
+                                            Text(entry.title, style = MaterialTheme.typography.bodyLarge)
+                                            Text(
+                                                if (entry.category.isNotBlank()) entry.category
+                                                else entry.modifiedAt.toDisplayString(),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -232,9 +266,10 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
 private fun CategoryTree(
     categories: List<String>,
     selectedCategory: String?,
-    onSelect: (String?) -> Unit
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Column {
+    Column(modifier) {
         CategoryTreeRow(
             label = "全部",
             icon = Icons.Filled.FolderOpen,
