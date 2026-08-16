@@ -77,4 +77,23 @@ class EditScreenEntryTest {
         assertEquals("新的", saved.title)
         assertNotEquals(UUID(0L, 0L), saved.id)
     }
+
+    @Test
+    fun accountIsCarriedThroughAndDoesNotAffectHistory() {
+        val old = existing("同一個提示").copy(account = "old-user")
+
+        val saved = entryToSave(old, title = old.title, account = "new-user", hint = old.hint, now = now)
+
+        assertEquals("new-user", saved.account)
+        assertTrue("改帳號不算改提示，不該寫進 history", saved.history.isEmpty())
+    }
+
+    @Test
+    fun accountDefaultsToExistingEntrysAccountWhenNotPassed() {
+        val old = existing("同一個提示").copy(account = "kept-user")
+
+        val saved = entryToSave(old, title = old.title, hint = old.hint, now = now)
+
+        assertEquals("kept-user", saved.account)
+    }
 }

@@ -53,6 +53,7 @@ class Vault private constructor(
 
     companion object {
         private const val PROP_TITLE = "Title"
+        private const val PROP_USERNAME = "UserName"
         private const val PROP_PASSWORD = "Password"
 
         /**
@@ -124,6 +125,7 @@ class Vault private constructor(
             target.setProperty(PROP_UUID_MARKER, entry.id.toString())
         }
         target.setProperty(PROP_TITLE, entry.title)
+        target.setProperty(PROP_USERNAME, entry.account)
         target.setProperty(PROP_PASSWORD, entry.hint)
 
         // 先清掉所有既有的 hist.<n>.(at|hint) 欄位，再寫入新的。
@@ -193,6 +195,7 @@ class Vault private constructor(
         return Entry(
             id = domainId(),
             title = props[PROP_TITLE].orEmpty(),
+            account = props[PROP_USERNAME].orEmpty(),
             hint = props[PROP_PASSWORD].orEmpty(),
             modifiedAt = lastModificationTime?.toInstant() ?: Instant.EPOCH,
             history = HistoryCodec.decode(props)

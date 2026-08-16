@@ -1,9 +1,16 @@
 package com.passprotect.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -16,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.SaveMessage
 import com.passprotect.ui.VaultViewModel
@@ -43,6 +51,7 @@ import java.util.UUID
 internal fun entryToSave(
     existing: Entry?,
     title: String,
+    account: String = existing?.account.orEmpty(),
     hint: String,
     now: Instant = Instant.now()
 ): Entry {
@@ -54,6 +63,7 @@ internal fun entryToSave(
     return Entry(
         id = existing?.id ?: UUID.randomUUID(),
         title = title,
+        account = account,
         hint = hint,
         modifiedAt = now,
         history = history
@@ -65,6 +75,7 @@ internal fun entryToSave(
 fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
     val existing = entryId?.let { id -> entries.firstOrNull { it.id == id } }
     var title by remember { mutableStateOf(existing?.title.orEmpty()) }
+    var account by remember { mutableStateOf(existing?.account.orEmpty()) }
     var hint by remember { mutableStateOf(existing?.hint.orEmpty()) }
     val uiState by viewModel.uiState.collectAsState()
     var didAttemptSave by remember { mutableStateOf(false) }
@@ -77,8 +88,24 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
         }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(if (existing == null) "新增" else "編輯") }) }) { padding ->
-        Column(Modifier.padding(padding)) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (existing == null) "新增" else "編輯") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             if (didAttemptSave) {
                 (uiState.saveMessage as? SaveMessage.Conflict)?.let {
                     Text("修改已存到另一個檔案（${it.conflictFileName}），同步資料夾裡的本尊沒有被動到，請到 KeePassXC 手動合併")
@@ -88,15 +115,28 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                     Text("存檔失敗，請再試一次")
                 }
             }
-            OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("標題") })
-            OutlinedTextField(value = hint, onValueChange = { hint = it }, label = { Text("提示") })
+            OutlinedTextField(
+                value = title, onValueChange = { title = it }, label = { Text("標題") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = account, onValueChange = { account = it }, label = { Text("帳號（選填）") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = hint, onValueChange = { hint = it }, label = { Text("提示") },
+                modifier = Modifier.fillMaxWidth()
+            )
             Button(
                 onClick = {
                     didAttemptSave = true
-                    viewModel.saveEntry(entryToSave(existing, title, hint))
+                    viewModel.saveEntry(entryToSave(existing, title = title, account = account, hint = hint))
                 },
                 enabled = title.isNotBlank()
-            ) { Text("儲存") }
+            ) {
+                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                Text("儲存")
+            }
         }
     }
 }

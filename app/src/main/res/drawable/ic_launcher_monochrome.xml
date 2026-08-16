@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 13+ 主題化圖示（桌布動態上色）用的單色版本。
+    路徑跟 ic_launcher_foreground 完全一樣——系統會忽略這裡填的顏色，
+    直接用桌布主色重新上色，這裡的 fillColor 只是佔位、通不通過建置檢查用。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M54,31.5 C45,31.5 37.5,35.25 33.75,40.5 L33.75,57 C33.75,66 42,73.5 54,78 C66,73.5 74.25,66 74.25,57 L74.25,40.5 C70.5,35.25 63,31.5 54,31.5 Z
+                           M59.25,48 A5.25,5.25 0 1,0 48.75,48 A5.25,5.25 0 1,0 59.25,48 Z
+                           M51.75,52.5 L56.25,52.5 L58.5,64.5 L49.5,64.5 Z" />
+</vector>

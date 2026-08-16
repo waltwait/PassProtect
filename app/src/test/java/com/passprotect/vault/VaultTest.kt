@@ -29,6 +29,7 @@ class VaultTest {
     private fun sampleEntry(title: String = "github.com") = Entry(
         id = UUID.randomUUID(),
         title = title,
+        account = "user@example.com",
         hint = "提示：貓的名字 + 生日",
         modifiedAt = Instant.parse("2026-08-13T00:00:00Z"),
         history = listOf(
@@ -53,8 +54,20 @@ class VaultTest {
 
         assertEquals(entry.id, got.id)
         assertEquals(entry.title, got.title)
+        assertEquals(entry.account, got.account)
         assertEquals(entry.hint, got.hint)
         assertEquals(entry.history, got.history)
+    }
+
+    @Test
+    fun upsertWithBlankAccountRoundTripsAsBlank() {
+        // account 選填——留白是正常路徑，不該在 KDBX 裡憑空長出 null 或例外。
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry().copy(account = "")
+        vault.upsert(entry)
+
+        val reopened = Vault.open(vault.serialize(pw()), pw())
+        assertEquals("", reopened.entries().single().account)
     }
 
     @Test

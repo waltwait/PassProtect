@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        整個 app 用 Compose 畫面，畫面標題列全部交給各畫面自己的 Scaffold/
+        TopAppBar 管——這裡只是把系統預設會疊加的那條 ActionBar 關掉，
+        不做其他樣式設定（顏色/字型交給 PassProtectTheme 這個 Compose 主題）。
+    -->
+    <style name="Theme.PassProtect" parent="android:Theme.DeviceDefault.NoActionBar" />
+</resources>

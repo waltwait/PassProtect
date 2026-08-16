@@ -2,26 +2,41 @@ package com.passprotect.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.navigation.NavController
 import com.passprotect.crypto.BiometricUnlock
 import com.passprotect.crypto.WrappedKeyStore
 import com.passprotect.ui.VaultUiState
@@ -30,7 +45,7 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(uiState: VaultUiState, viewModel: VaultViewModel) {
+fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewModel: VaultViewModel) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -42,13 +57,36 @@ fun SettingsScreen(uiState: VaultUiState, viewModel: VaultViewModel) {
     fun currentBiometric(): BiometricUnlock? =
         activity?.let { BiometricUnlock(it, store = WrappedKeyStore(File(context.applicationContext.filesDir, "keys"))) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("設定") }) }) { padding ->
-        Column(Modifier.padding(padding)) {
-            Text("資料庫位置")
-            Button(onClick = { pickFolder.launch(null) }) { Text("重選資料夾") }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("設定") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            SettingsSectionLabel(Icons.Filled.Folder, "資料庫位置")
+            OutlinedButton(onClick = { pickFolder.launch(null) }) { Text("重選資料夾") }
 
-            Row {
-                Text("生體辨識解鎖")
+            HorizontalDivider()
+
+            SettingsSectionLabel(Icons.Filled.Fingerprint, "生體辨識解鎖")
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("開啟後可用指紋/臉部辨識取代主密碼")
                 Switch(
                     checked = uiState.biometricEnabled,
                     onCheckedChange = { enabled ->
@@ -61,24 +99,33 @@ fun SettingsScreen(uiState: VaultUiState, viewModel: VaultViewModel) {
                 )
             }
 
-            Text("自動上鎖逾時")
-            Row {
+            HorizontalDivider()
+
+            SettingsSectionLabel(Icons.Filled.Timer, "自動上鎖逾時")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(1L to "1 分鐘", 5L to "5 分鐘", 15L to "15 分鐘").forEach { (minutes, label) ->
                     val millis = minutes * 60_000L
-                    TextButton(onClick = { viewModel.setAutoLockTimeout(millis) }) {
-                        Text(label + if (uiState.autoLockPolicy.idleTimeoutMillis == millis) "（使用中）" else "")
+                    val active = uiState.autoLockPolicy.idleTimeoutMillis == millis
+                    if (active) {
+                        Button(onClick = { viewModel.setAutoLockTimeout(millis) }) { Text(label) }
+                    } else {
+                        OutlinedButton(onClick = { viewModel.setAutoLockTimeout(millis) }) { Text(label) }
                     }
                 }
             }
 
-            Text("變更主密碼")
+            HorizontalDivider()
+
+            SettingsSectionLabel(Icons.Filled.Password, "變更主密碼")
             OutlinedTextField(
                 value = newPassword, onValueChange = { newPassword = it },
-                label = { Text("新主密碼") }, visualTransformation = PasswordVisualTransformation()
+                label = { Text("新主密碼") }, visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = confirmPassword, onValueChange = { confirmPassword = it },
-                label = { Text("確認新主密碼") }, visualTransformation = PasswordVisualTransformation()
+                label = { Text("確認新主密碼") }, visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
             )
             Button(
                 onClick = {
@@ -90,5 +137,13 @@ fun SettingsScreen(uiState: VaultUiState, viewModel: VaultViewModel) {
                 enabled = newPassword.isNotEmpty() && newPassword == confirmPassword
             ) { Text("變更") }
         }
+    }
+}
+
+@Composable
+private fun SettingsSectionLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Text(text, style = MaterialTheme.typography.titleMedium)
     }
 }

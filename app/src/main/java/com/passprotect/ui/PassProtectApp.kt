@@ -1,5 +1,10 @@
 package com.passprotect.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,7 +45,14 @@ fun PassProtectApp(viewModel: VaultViewModel) {
         }
     }
 
-    NavHost(navController = navController, startDestination = "setup") {
+    NavHost(
+        navController = navController,
+        startDestination = "setup",
+        enterTransition = { slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(220)) },
+        exitTransition = { slideOutHorizontally(tween(220)) { -it / 8 } + fadeOut(tween(220)) },
+        popEnterTransition = { slideInHorizontally(tween(220)) { -it / 8 } + fadeIn(tween(220)) },
+        popExitTransition = { slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(220)) }
+    ) {
         composable("setup") { SetupScreen(uiState, viewModel) }
         composable("unlock") { UnlockScreen(uiState, viewModel) }
         composable("list") { ListScreen(uiState.entries, navController, viewModel) }
@@ -55,9 +67,9 @@ fun PassProtectApp(viewModel: VaultViewModel) {
         }
         composable("history/{entryId}") { backStackEntry ->
             val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
-            HistoryScreen(id, uiState.entries)
+            HistoryScreen(id, uiState.entries, navController)
         }
-        composable("settings") { SettingsScreen(uiState, viewModel) }
+        composable("settings") { SettingsScreen(uiState, navController, viewModel) }
     }
 
     // 一旦設定完成且已解鎖，且目前停在 setup/unlock，導去清單。

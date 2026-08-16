@@ -1,11 +1,22 @@
 package com.passprotect.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -16,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.VaultViewModel
 import com.passprotect.vault.Entry
@@ -32,14 +44,54 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
         return
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(entry.title) }) }) { padding ->
-        Column(Modifier.padding(padding)) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(entry.title) },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (entry.account.isNotBlank()) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Person,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("帳號：${entry.account}")
+                }
+            }
             Text(entry.hint)
             Text("最後修改：${entry.modifiedAt}")
-            Row {
-                Button(onClick = { navController.navigate("edit/${entry.id}") }) { Text("編輯") }
-                Button(onClick = { navController.navigate("history/${entry.id}") }) { Text("查看歷史") }
-                Button(onClick = { showDeleteConfirm = true }) { Text("刪除") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { navController.navigate("edit/${entry.id}") }) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                    Text("編輯")
+                }
+                FilledTonalButton(onClick = { navController.navigate("history/${entry.id}") }) {
+                    Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                    Text("查看歷史")
+                }
+                OutlinedButton(
+                    onClick = { showDeleteConfirm = true },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = androidx.compose.material3.MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                    Text("刪除")
+                }
             }
         }
     }

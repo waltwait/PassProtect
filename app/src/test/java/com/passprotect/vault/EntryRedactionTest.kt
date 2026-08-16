@@ -26,6 +26,20 @@ class EntryRedactionTest {
     }
 
     @Test
+    fun entryToStringDoesNotContainAccount() {
+        val account = "user@example.com"
+        val entry = Entry(
+            id = UUID.randomUUID(),
+            title = "github.com",
+            account = account,
+            hint = secret,
+            modifiedAt = Instant.parse("2026-08-13T00:00:00Z")
+        )
+
+        assertFalse("toString 不可包含帳號內容", entry.toString().contains(account))
+    }
+
+    @Test
     fun historicalHintToStringDoesNotContainHint() {
         val h = HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), secret)
 
@@ -54,8 +68,8 @@ class EntryRedactionTest {
         // 只覆寫 toString，不可動到 data class 生成的 equals
         val id = UUID.randomUUID()
         val at = Instant.parse("2026-08-13T00:00:00Z")
-        val a = Entry(id, "t", "hint-a", at)
-        val b = Entry(id, "t", "hint-b", at)
+        val a = Entry(id = id, title = "t", hint = "hint-a", modifiedAt = at)
+        val b = Entry(id = id, title = "t", hint = "hint-b", modifiedAt = at)
 
         assertFalse(a == b)
         assertTrue(a == a.copy())

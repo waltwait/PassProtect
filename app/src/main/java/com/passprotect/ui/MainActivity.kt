@@ -1,9 +1,11 @@
 package com.passprotect.ui
 
+import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,12 +13,12 @@ import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.passprotect.session.AutoLock
 import com.passprotect.session.AutoLockPolicy
+import com.passprotect.ui.theme.PassProtectTheme
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -55,6 +57,17 @@ class MainActivity : FragmentActivity() {
             WindowManager.LayoutParams.FLAG_SECURE
         )
 
+        // FLAG_SECURE 把「最近使用」卡片的畫面內容整個遮住，使用者在那個畫面
+        // 唯一看得到的就是系統畫的「圖示 + app 名稱」那條列——不設定的話它是
+        // 系統隨便套的預設色（一般是灰/白），跟 app 圖示的深藍完全不搭，看起來
+        // 像沒設計過。這裡把它換成跟 ic_launcher_background 一致的顏色。
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setLabel("PassProtect")
+                .setPrimaryColor(Color.parseColor("#1E2A5E"))
+                .build()
+        )
+
         // 設定畫面改自動上鎖逾時後，policy 會變；AutoLock 本身沒有「換 policy」
         // 的 API，重建一個新的最單純，成本可忽略。
         lifecycleScope.launch {
@@ -65,7 +78,7 @@ class MainActivity : FragmentActivity() {
         registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
 
         setContent {
-            MaterialTheme {
+            PassProtectTheme {
                 Surface {
                     PassProtectApp(viewModel)
                 }
