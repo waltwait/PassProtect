@@ -7,17 +7,24 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -53,6 +60,7 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
     }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
+    var newSnippet by remember { mutableStateOf("") }
 
     fun currentBiometric(): BiometricUnlock? =
         activity?.let { BiometricUnlock(it, store = WrappedKeyStore(File(context.applicationContext.filesDir, "keys"))) }
@@ -77,6 +85,58 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
         ) {
             SettingsSectionLabel(Icons.Filled.Folder, "資料庫位置")
             OutlinedButton(onClick = { pickFolder.launch(null) }) { Text("重選資料夾") }
+
+            HorizontalDivider()
+
+            SettingsSectionLabel(Icons.Filled.TextFields, "常用提示詞")
+            Text(
+                "存一些常用的字詞，編輯提示時可以直接點選組合，不用每次重打",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = newSnippet,
+                    onValueChange = { newSnippet = it },
+                    label = { Text("新增提示詞") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = {
+                        viewModel.addHintSnippet(newSnippet)
+                        newSnippet = ""
+                    },
+                    enabled = newSnippet.isNotBlank()
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "新增")
+                }
+            }
+            if (uiState.hintSnippets.isNotEmpty()) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    uiState.hintSnippets.forEach { snippet ->
+                        InputChip(
+                            selected = false,
+                            onClick = { viewModel.removeHintSnippet(snippet) },
+                            label = { Text(snippet) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = "刪除「$snippet」",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
 
             HorizontalDivider()
 
