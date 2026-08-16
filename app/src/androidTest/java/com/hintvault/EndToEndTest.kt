@@ -13,7 +13,6 @@ import com.hintvault.storage.VaultRepository
 import com.hintvault.vault.Entry
 import com.hintvault.vault.HistoricalHint
 import com.hintvault.vault.Vault
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

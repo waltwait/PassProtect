@@ -71,6 +71,10 @@ class SafVaultFile(
      * 直接重用 [writeSibling] 已驗證過的「絕不覆蓋既有檔案」邏輯所在的同一個
      * MIME type 常數，但語意不同：這裡撞名是**錯誤**而非該自動避開的情況，
      * 因此不呼叫 [uniqueNameFor]，而是直接檢查、直接拋例外。
+     *
+     * 「先檢查存不存在、再建立」不是原子操作，與 [writeSibling] 走的 [uniqueNameFor]
+     * 是同一個既有的 TOCTOU 保留條款：SAF 沒有 create-if-absent 這種原子語意，
+     * 外部同步工具若剛好卡在檢查與建立之間建出同名檔案，這裡擋不住。
      */
     override fun create(bytes: ByteArray) {
         if (directory.findFile(fileName) != null) {

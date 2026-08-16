@@ -5,7 +5,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -42,7 +41,7 @@ fun HintVaultApp(viewModel: VaultViewModel) {
     }
 
     NavHost(navController = navController, startDestination = "setup") {
-        composable("setup") { SetupScreen(uiState.setup, viewModel) }
+        composable("setup") { SetupScreen(uiState, viewModel) }
         composable("unlock") { UnlockScreen(uiState, viewModel) }
         composable("list") { ListScreen(uiState.entries, navController, viewModel) }
         composable("detail/{entryId}") { backStackEntry ->

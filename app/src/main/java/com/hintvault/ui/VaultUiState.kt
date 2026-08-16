@@ -18,7 +18,23 @@ data class VaultUiState(
     val entries: List<Entry> = emptyList(),
     val biometricEnabled: Boolean = false,
     val autoLockPolicy: AutoLockPolicy = AutoLockPolicy(),
-    val saveMessage: SaveMessage? = null
+    val saveMessage: SaveMessage? = null,
+    /**
+     * 「正在建立新資料庫」。刻意不共用 [isUnlocking]——那個欄位語意上專屬解鎖流程
+     * （`UnlockScreen` 用它畫進度圈），而建立新資料庫是設定流程裡的另一段
+     * 同樣長達數秒的 Argon2 運算，畫面不同、時機不同，共用會讓兩個流程
+     * 的進度指示互相干擾。
+     */
+    val isCreatingVault: Boolean = false,
+    /**
+     * 設定流程（目前只有「建立新資料庫」）要告訴使用者的一句話。
+     *
+     * 兩種來源：建立失敗的錯誤訊息（由 `SetupScreen` 顯示），以及規格 §4.2
+     * 要求的「KDF 校準後仍超出預算」慢速裝置提醒（建立成功後畫面已切到清單，
+     * 因此由 `ListScreen` 顯示，可由使用者按「知道了」清掉）。刻意不重用
+     * [unlockError]：那是 enum、語意是解鎖失敗的原因，這裡兩種都不是解鎖失敗。
+     */
+    val setupError: String? = null
 )
 
 /**
@@ -46,4 +62,6 @@ sealed interface SetupState {
 sealed interface SaveMessage {
     data object Saved : SaveMessage
     data class Conflict(val conflictFileName: String) : SaveMessage
+    /** 存檔失敗（例外，或前置條件不成立）。畫面必須留在原地並顯示訊息，不可靜默無反應。 */
+    data object Error : SaveMessage
 }

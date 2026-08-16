@@ -7,6 +7,7 @@ import com.hintvault.storage.VaultFile
 import com.hintvault.storage.VaultRepository
 import com.hintvault.vault.Vault
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -24,12 +25,25 @@ class VaultViewModelTest {
 
     /** JVM 上可用的最小假實作，繞過真正的 SAF。 */
     private class FakeVaultFile(var content: ByteArray) : VaultFile {
+        /** 模擬「檔案在 session 中途被外部刪掉」——VaultRepository KDoc 記載的失敗模式。 */
+        var failReads = false
+        /** 模擬 SAF 建檔失敗（權限沒了、撞名…）。 */
+        var failCreate = false
+        var created = false
+
         override val displayName = "vault.kdbx"
-        override fun read() = content
+        override fun read(): ByteArray {
+            if (failReads) throw java.io.FileNotFoundException("外部刪掉了")
+            return content
+        }
         override fun write(bytes: ByteArray) { content = bytes }
         override fun lastModified() = 1000L
         override fun writeSibling(suffix: String, bytes: ByteArray) = displayName + suffix
-        override fun create(bytes: ByteArray) { content = bytes }
+        override fun create(bytes: ByteArray) {
+            if (failCreate) throw java.io.FileNotFoundException("無法建立")
+            content = bytes
+            created = true
+        }
     }
 
     private class FakeBackupStore : com.hintvault.storage.BackupStore {
@@ -269,5 +283,198 @@ class VaultViewModelTest {
         }
         assertTrue(threwWithOldPassword)
         Vault.open(file.content, pw("new-password")) // 不拋例外即為成功
+    }
+
+    // ---- C1：存檔進行中被上鎖，不可把主密碼從底下抽走 ----
+
+    /**
+     * 這是唯一一個真的把 race 排出來的測試：把 [VaultViewModel.setUnlockDispatcherForTest]
+     * 換成 `StandardTestDispatcher`，`persist()` 裡 `withContext(unlockDispatcher)`
+     * 之後的 Argon2 序列化與寫檔就會停在排程器上等 `advanceUntilIdle()`——正好對應
+     * 實機上「按下儲存後隨手關螢幕，AutoLock 零寬限期觸發 lock()」的那個時間窗。
+     *
+     * 修好之前：`persist()` 拿的是 `masterPasswordCache` 本人，`lock()` 會把它就地
+     * 覆寫成 NUL，之後才跑的 KDF 等於用一把全空的密碼加密，寫出來的 KDBX
+     * 誰也打不開——永久資料遺失。修好之後：`persist()` 一進來就複製一份自己的，
+     * 因此下面 `Vault.open(file.content, pw())` 必須成功。
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun lockDuringAnInFlightSaveStillWritesAFileTheRealPasswordCanOpen() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val file = FakeVaultFile(bytes)
+        val repo = VaultRepository(file, FakeBackupStore())
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(Dispatchers.Unconfined)
+        }
+        vm.unlockWithPassword(pw())
+        vm.setUnlockDispatcherForTest(kotlinx.coroutines.test.StandardTestDispatcher(testScheduler))
+
+        val entry = com.hintvault.vault.Entry(
+            id = java.util.UUID.randomUUID(),
+            title = "race",
+            hint = "提示",
+            modifiedAt = java.time.Instant.now()
+        )
+        vm.saveEntry(entry)
+        vm.lock() // 存檔還卡在 dispatcher 上時上鎖
+        advanceUntilIdle()
+
+        assertEquals(SaveMessage.Saved, vm.uiState.value.saveMessage)
+        val reopened = Vault.open(file.content, pw())
+        assertTrue(reopened.entries().any { it.title == "race" })
+    }
+
+    // ---- I1：存檔失敗必須有訊息，不能靜默卡住或崩潰 ----
+
+    /**
+     * `VaultRepository.save()` 自己的 KDoc 就寫明：檔案在 session 中途被外部刪掉時
+     * 它直接擲例外。修好之前 `persist()` 沒有任何 try/catch，這個例外會從
+     * `viewModelScope.launch` 逃出去直接讓 app 崩潰；而且 `saveEntry()` 已經先把
+     * `saveMessage` 清成 null，畫面連個訊息都不會有。
+     */
+    @Test
+    fun saveFailureFromExternalDeletionSurfacesErrorInsteadOfCrashing() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val file = FakeVaultFile(bytes)
+        val repo = VaultRepository(file, FakeBackupStore())
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(Dispatchers.Unconfined)
+        }
+        vm.unlockWithPassword(pw())
+        file.failReads = true
+
+        vm.saveEntry(
+            com.hintvault.vault.Entry(
+                id = java.util.UUID.randomUUID(),
+                title = "會失敗",
+                hint = "提示",
+                modifiedAt = java.time.Instant.now()
+            )
+        )
+
+        assertEquals(SaveMessage.Error, vm.uiState.value.saveMessage)
+    }
+
+    @Test
+    fun deleteFailureAlsoSurfacesErrorMessage() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val file = FakeVaultFile(bytes)
+        val repo = VaultRepository(file, FakeBackupStore())
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(repo, FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(Dispatchers.Unconfined)
+        }
+        vm.unlockWithPassword(pw())
+        val entry = com.hintvault.vault.Entry(
+            id = java.util.UUID.randomUUID(),
+            title = "to-delete",
+            hint = "提示",
+            modifiedAt = java.time.Instant.now()
+        )
+        vm.saveEntry(entry)
+        file.failReads = true
+
+        vm.deleteEntry(entry.id)
+
+        assertEquals(SaveMessage.Error, vm.uiState.value.saveMessage)
+    }
+
+    // ---- I3：換資料夾必須先整組重設，不可拿舊的解密內容配新檔案 ----
+
+    @Test
+    fun resetForNewLocationLocksAndBlocksSavingWithTheStaleVault() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+
+        vm.resetForNewLocation()
+
+        assertEquals(LockState.Locked, vm.uiState.value.lockState)
+        assertTrue(vm.uiState.value.entries.isEmpty())
+        assertEquals(false, vm.uiState.value.isUnlocking)
+        // 舊的解密 vault 已經不在 session 裡：任何存檔都會直接被擋下來，
+        // 不可能把舊資料庫的內容寫進剛選的新資料庫。
+        var threw = false
+        try {
+            vm.saveEntry(
+                com.hintvault.vault.Entry(
+                    id = java.util.UUID.randomUUID(),
+                    title = "stale",
+                    hint = "提示",
+                    modifiedAt = java.time.Instant.now()
+                )
+            )
+        } catch (_: IllegalStateException) {
+            threw = true
+        }
+        assertTrue(threw)
+    }
+
+    // ---- 歷史紀錄寫入路徑（EditScreen.entryToSave → Vault.upsert → 檔案 → entries()）----
+
+    /**
+     * [com.hintvault.ui.screens.entryToSave] 的規則本身在 `EditScreenEntryTest` 測；
+     * 這裡測的是它接上 `Vault.upsert()`/`HistoryCodec` 之後，舊提示真的存進了
+     * KDBX 並且讀得回來——否則 `HistoryScreen` 還是會永遠顯示「沒有歷史紀錄」。
+     */
+    @Test
+    fun editingAnEntrysHintPersistsThePreviousHintIntoHistory() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+
+        vm.saveEntry(com.hintvault.ui.screens.entryToSave(null, title = "github.com", hint = "舊提示"))
+        val stored = vm.uiState.value.entries.single()
+        vm.saveEntry(com.hintvault.ui.screens.entryToSave(stored, title = "github.com", hint = "新提示"))
+
+        val updated = vm.uiState.value.entries.single()
+        assertEquals("新提示", updated.hint)
+        assertEquals(listOf("舊提示"), updated.history.map { it.hint })
+    }
+
+    // ---- I2 + I5：建立新資料庫 ----
+
+    @Test
+    fun createNewVaultCalibratesWritesTheFileAndUnlocksIt() = runTest {
+        val file = FakeVaultFile(ByteArray(0))
+        val vm = VaultViewModel().apply { setUnlockDispatcherForTest(Dispatchers.Unconfined) }
+        val password = pw("brand new")
+        var locationRemembered = false
+
+        vm.createNewVault(file, FakeBackupStore(), password) { locationRemembered = true }
+
+        assertEquals(SetupState.Ready, vm.uiState.value.setup)
+        assertEquals(LockState.Unlocked, vm.uiState.value.lockState)
+        assertEquals(false, vm.uiState.value.isCreatingVault)
+        assertTrue(locationRemembered)
+        assertTrue(file.created)
+        // 校準選出來的參數真的被用去加密：新檔案用同一把主密碼開得起來。
+        Vault.open(file.content, pw("brand new"))
+        // 呼叫端傳進來的密碼陣列在每一條離開路徑都被清空。
+        assertTrue(password.all { it == '\u0000' })
+    }
+
+    /**
+     * 修好之前 `newFile.create()` 擲例外會直接從 Compose 的 onClick 炸掉 app，
+     * 而且那條路徑不清主密碼。
+     */
+    @Test
+    fun createNewVaultFailureSurfacesSetupErrorWipesPasswordAndStaysLocked() = runTest {
+        val file = FakeVaultFile(ByteArray(0)).apply { failCreate = true }
+        val vm = VaultViewModel().apply { setUnlockDispatcherForTest(Dispatchers.Unconfined) }
+        val password = pw("brand new")
+
+        vm.createNewVault(file, FakeBackupStore(), password) { }
+
+        assertTrue(vm.uiState.value.setupError != null)
+        assertEquals(false, vm.uiState.value.isCreatingVault)
+        assertEquals(LockState.Locked, vm.uiState.value.lockState)
+        assertTrue(password.all { it == '\u0000' })
+
+        vm.clearSetupError()
+        assertNull(vm.uiState.value.setupError)
     }
 }

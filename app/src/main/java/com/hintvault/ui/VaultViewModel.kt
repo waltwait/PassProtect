@@ -6,6 +6,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hintvault.crypto.BiometricUnlock
+import com.hintvault.crypto.KdfParams
 import com.hintvault.crypto.KeyPermanentlyInvalidException
 import com.hintvault.crypto.KeystoreKeys
 import com.hintvault.crypto.WrappedKeyStore
@@ -112,15 +113,39 @@ class VaultViewModel : ViewModel() {
             return
         }
         val dir = DocumentFile.fromTreeUri(appContext, location.treeUri)
-        if (dir == null || dir.findFile(location.fileName) == null) {
+        if (dir == null) {
             _uiState.update { it.copy(setup = SetupState.NeedsFolderPicker) }
             return
         }
+        // 這裡刻意**不**檢查「檔案還在不在」。檔案不見正是規格 §4.8 的備份還原
+        // 流程存在的理由：`SafVaultFile.document` 是 lazy getter，替一個還不存在的
+        // 檔名建構 SafVaultFile 是安全的，`VaultHealthCheck.check()` 讀不到檔案時
+        // 會轉成 RecoverableFromBackup/Unrecoverable，由 [selectFile] 導到
+        // NeedsBackupDecision。若在這裡先攔下來退回 NeedsFolderPicker，使用者只會
+        // 看到「建立一個新的空資料庫」，好端端的備份就被靜默孤立了。
         directory = dir
         selectFile(appContext, dir, location.fileName)
     }
 
+    /**
+     * 也是設定畫面「重選資料夾」的入口，因此第一件事必須是回到乾淨的上鎖狀態。
+     *
+     * 這個函式原本只服務首次設定（當下必然是上鎖的），只換掉
+     * [directory]/[file]/[backups]/[repository]。設定畫面接上同一個入口後，
+     * 使用者可能在**已解鎖**時重選資料夾：那時舊保險庫仍解密在 [session] 裡、
+     * 舊主密碼仍在 [masterPasswordCache]、[loadedStamp] 還是舊檔案的指紋，卻
+     * 全部被配到新檔案上——下一次存檔會把舊資料庫的內容寫進剛選的新資料庫，
+     * 或產生莫名其妙的衝突檔。所以先整組重設，等使用者對新檔案重新解鎖。
+     *
+     * [loadedStamp] 是 [lock] 本身不會清的（同一個檔案 lock/unlock 來回時它
+     * 本來就該留著），但換資料夾會讓它失效，因此這裡額外清掉。
+     *
+     * 不需要自己加導覽：`HintVaultApp` 的 `LaunchedEffect(setup, lockState)`
+     * 會因為 lockState 變回 Locked 而自動把使用者帶離設定畫面。
+     */
     fun onFolderChosen(context: Context, treeUri: Uri) {
+        resetForNewLocation()
+
         val appContext = context.applicationContext
         VaultUriPermissions.persist(appContext, treeUri)
         val dir = DocumentFile.fromTreeUri(appContext, treeUri) ?: return
@@ -143,28 +168,126 @@ class VaultViewModel : ViewModel() {
         selectFile(appContext, dir, fileName)
     }
 
+    /**
+     * 建立新資料庫。與 [attemptUnlock]/[persist]/[changeMasterPassword] 同一套形狀：
+     * Argon2 與 SAF I/O 都在 [unlockDispatcher] 上跑（規格量測 2.2-5.9 秒，留在
+     * 主執行緒等於畫面凍住那麼久），整段包在
+     * try/catch(Cancellation, rethrow)/catch(Exception)/finally(wipe) 裡——
+     * 舊版只在 `dir == null` 這一條路徑清密碼，`newFile.create()` 擲例外時
+     * 明文密碼會留在記憶體，而且例外會從 Compose 的 onClick 直接炸掉整個 app。
+     *
+     * 同時這裡是規格 §4.2 的 KDF 校準點：`Vault.create(kdf)` 本身不跑 KDF，
+     * KDF 只發生在 `serialize()`，因此校準必須實際計時
+     * `Vault.create(候選參數).serialize(主密碼)`。被選中的那一級所產生的位元組
+     * 直接拿去寫檔，不再多跑一次同樣參數的 KDF。
+     */
     fun onNewVaultPasswordChosen(context: Context, masterPassword: CharArray) {
         val appContext = context.applicationContext
-        val dir = directory ?: run { masterPassword.wipe(); return }
-        val fileName = "vault.kdbx"
-        val newFile = SafVaultFile(appContext, dir, fileName)
-        val vault = Vault.create()
-        val bytes = vault.serialize(masterPassword)
-        newFile.create(bytes)
-
-        val backupStore = FileBackupStore(File(appContext.filesDir, "backups"))
-        file = newFile
-        backups = backupStore
-        repository = VaultRepository(newFile, backupStore)
-        loadedStamp = FileStamp.of(bytes, newFile.lastModified())
-        VaultLocationPrefs(appContext).put(dir.uri, fileName)
-
-        cacheMasterPassword(masterPassword)
-        masterPassword.wipe()
-        session.unlock(vault)
-        _uiState.update {
-            it.copy(setup = SetupState.Ready, lockState = LockState.Unlocked, entries = vault.entries())
+        val dir = directory
+        if (dir == null) {
+            masterPassword.wipe()
+            _uiState.update { it.copy(setupError = "尚未選擇資料夾，請先選擇一個同步資料夾") }
+            return
         }
+        val fileName = "vault.kdbx"
+        createNewVault(
+            newFile = SafVaultFile(appContext, dir, fileName),
+            backupStore = FileBackupStore(File(appContext.filesDir, "backups")),
+            masterPassword = masterPassword,
+            rememberLocation = { VaultLocationPrefs(appContext).put(dir.uri, fileName) }
+        )
+    }
+
+    /**
+     * [onNewVaultPasswordChosen] 扣掉 SAF/Context 之後的本體。
+     *
+     * 拆出來的理由跟本檔案其他 `*ForTest` 入口一樣：`SafVaultFile`/
+     * `VaultLocationPrefs`/`DocumentFile` 在純 JVM 測試環境裡建不出來，
+     * 但校準、非同步、密碼清除、錯誤處理這些真正會出錯的邏輯全都在這裡，
+     * 必須測得到。因此把不可測的三個 Android 相依物件都變成參數/lambda。
+     */
+    internal fun createNewVault(
+        newFile: VaultFile,
+        backupStore: BackupStore,
+        masterPassword: CharArray,
+        rememberLocation: () -> Unit
+    ) {
+        _uiState.update { it.copy(isCreatingVault = true, setupError = null) }
+        viewModelScope.launch {
+            try {
+                val created = withContext(unlockDispatcher) {
+                    val outcome = calibrateAndSerialize(masterPassword)
+                    newFile.create(outcome.bytes)
+                    CreatedVault(outcome, FileStamp.of(outcome.bytes, newFile.lastModified()))
+                }
+
+                file = newFile
+                backups = backupStore
+                repository = VaultRepository(newFile, backupStore)
+                loadedStamp = created.stamp
+                rememberLocation()
+
+                cacheMasterPassword(masterPassword)
+                val vault = created.outcome.vault
+                session.unlock(vault)
+                _uiState.update {
+                    it.copy(
+                        setup = SetupState.Ready,
+                        lockState = LockState.Unlocked,
+                        entries = vault.entries(),
+                        isCreatingVault = false,
+                        setupError = if (KdfParams.exceedsBudget(created.outcome.millis)) SLOW_KDF_NOTICE else null
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isCreatingVault = false, setupError = "建立資料庫失敗，請確認資料夾權限或改選其他資料夾後再試一次")
+                }
+            } finally {
+                masterPassword.wipe()
+            }
+        }
+    }
+
+    /** [calibrateAndSerialize] 的結果：選中的那一級參數、它產生的位元組與實測耗時。 */
+    private class CalibrationOutcome(
+        val vault: Vault,
+        val bytes: ByteArray,
+        val params: KdfParams,
+        val millis: Long
+    )
+
+    private class CreatedVault(val outcome: CalibrationOutcome, val stamp: FileStamp)
+
+    /**
+     * 跑 [KdfParams.calibrate]，每一級都真的建一個 vault 並以 [masterPassword]
+     * 序列化計時。重複用同一份主密碼沒有問題——被選中之前什麼都還沒寫進檔案。
+     */
+    private fun calibrateAndSerialize(masterPassword: CharArray): CalibrationOutcome {
+        var last: CalibrationOutcome? = null
+        val chosen = KdfParams.calibrate { params ->
+            val vault = Vault.create(params)
+            val start = System.nanoTime()
+            val bytes = vault.serialize(masterPassword)
+            val millis = (System.nanoTime() - start) / 1_000_000
+            last = CalibrationOutcome(vault, bytes, params, millis)
+            millis
+        }
+        // calibrate() 的合約保證回傳值就是最後量測的那一級（第一個在預算內的，
+        // 或全部超標時的 FLOOR，也就是階梯最後一級），因此正常情況下可以直接
+        // 重用它產生的位元組。這個 fallback 只是不把正確性押在那個合約上。
+        last?.takeIf { it.params == chosen }?.let { return it }
+        val vault = Vault.create(chosen)
+        val start = System.nanoTime()
+        val bytes = vault.serialize(masterPassword)
+        return CalibrationOutcome(vault, bytes, chosen, (System.nanoTime() - start) / 1_000_000)
+    }
+
+    /** 使用者按「知道了」後清掉 [VaultUiState.setupError]（慢速裝置提醒用）。 */
+    fun clearSetupError() {
+        _uiState.update { it.copy(setupError = null) }
     }
 
     fun resolveBackupDecision(accept: Boolean) {
@@ -286,23 +409,61 @@ class VaultViewModel : ViewModel() {
         viewModelScope.launch { persist(vault) }
     }
 
+    /**
+     * **主密碼取的是拷貝，不是 [masterPasswordCache] 那個陣列本身。**
+     * `vault.serialize()` 在 [unlockDispatcher] 上跑約 2.2 秒的 Argon2，這段期間
+     * [lock] 可能在主執行緒被呼叫（`AutoLock` 的螢幕關閉/切到背景是零寬限期
+     * 觸發，按下「儲存」後隨手關螢幕就會發生），而 [lock] 會就地把
+     * [masterPasswordCache] 的每個字元就地覆寫成 NUL。若這裡拿的是同一個陣列，
+     * KDF 就會在中途改用一把被清成半空的密碼繼續推導，寫出一個誰也打不開的
+     * KDBX——永久資料遺失。改成一進來就拷貝一份自己擁有的，[lock] 清的是它自己
+     * 那份，這邊的運算完整跑完，最後在 finally 裡清掉自己的拷貝。
+     *
+     * 例外處理與三條前置條件不成立的路徑都必須回報 [SaveMessage.Error]：
+     * `saveEntry`/`deleteEntry` 現在會先把 saveMessage 清成 null，靜默 return
+     * 會讓 `EditScreen` 永遠等不到任何訊息，看起來就是卡住。
+     */
     private suspend fun persist(vault: Vault) {
-        val password = masterPasswordCache ?: return
-        val repo = repository ?: return
-        persistMutex.withLock {
-            val stamp = loadedStamp ?: return@withLock
-            val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
-            when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
-                is SaveResult.Saved -> {
-                    loadedStamp = result.newStamp
-                    _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
+        val password = masterPasswordCache?.copyOf()
+        if (password == null) {
+            _uiState.update { it.copy(saveMessage = SaveMessage.Error) }
+            return
+        }
+        try {
+            val repo = repository
+            if (repo == null) {
+                _uiState.update { it.copy(saveMessage = SaveMessage.Error) }
+                return
+            }
+            persistMutex.withLock {
+                val stamp = loadedStamp
+                if (stamp == null) {
+                    _uiState.update { it.copy(saveMessage = SaveMessage.Error) }
+                    return@withLock
                 }
-                is SaveResult.Conflict -> {
-                    _uiState.update {
-                        it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+                val bytes = withContext(unlockDispatcher) { vault.serialize(password) }
+                when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                    is SaveResult.Saved -> {
+                        loadedStamp = result.newStamp
+                        _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
+                    }
+                    is SaveResult.Conflict -> {
+                        _uiState.update {
+                            it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+                        }
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            // 同 attemptUnlock：取消訊號必須先攔下來重丟，不能被下面的通用 catch 吃掉。
+            throw e
+        } catch (e: Exception) {
+            // VaultRepository.save() 自己的 KDoc 就寫明：檔案在 session 中途被外部
+            // 刪掉時它會直接擲例外。沒有這個 catch 的話例外會從 viewModelScope
+            // 的協程逃出去，直接讓 app 崩潰。
+            _uiState.update { it.copy(saveMessage = SaveMessage.Error) }
+        } finally {
+            password.wipe()
         }
     }
 
@@ -318,15 +479,22 @@ class VaultViewModel : ViewModel() {
      * 因此本函式的真實行為只在真機/模擬器上驗證（見 docs/manual-verification.md）。
      */
     fun enrollBiometric(biometric: BiometricUnlock) {
-        val password = masterPasswordCache ?: return
+        // 與 persist() 同一個理由：拷貝一份自己擁有的，別讓中途的 lock() 把
+        // 這條協程正在轉成 UTF-8 位元組的那個陣列清空（會把一把半空的密碼
+        // 包進生體辨識金鑰，之後怎麼刷都解不開）。
+        val password = masterPasswordCache?.copyOf() ?: return
         viewModelScope.launch {
-            val bytes = password.toUtf8Bytes()
-            val success = try {
-                biometric.enroll(bytes)
+            try {
+                val bytes = password.toUtf8Bytes()
+                val success = try {
+                    biometric.enroll(bytes)
+                } finally {
+                    bytes.wipe()
+                }
+                if (success) _uiState.update { it.copy(biometricEnabled = true) }
             } finally {
-                bytes.wipe()
+                password.wipe()
             }
-            if (success) _uiState.update { it.copy(biometricEnabled = true) }
         }
     }
 
@@ -388,6 +556,27 @@ class VaultViewModel : ViewModel() {
     }
 
     fun lock() {
+        resetToLockedState()
+    }
+
+    /**
+     * 「即將換到另一個檔案/資料夾」的重設：整組回到上鎖狀態，外加清掉
+     * [loadedStamp]。見 [onFolderChosen] 的 KDoc。
+     *
+     * `internal` 而非 `private`，是因為 [onFolderChosen] 本體被 SAF 綁死、
+     * 純 JVM 測試碰不到，但這段重設正是修的那個 bug 的本體，必須測得到。
+     */
+    internal fun resetForNewLocation() {
+        resetToLockedState()
+        loadedStamp = null
+    }
+
+    /**
+     * [lock] 的實作，另外供 [resetForNewLocation] 重用。刻意不清 [loadedStamp]：
+     * 一般的 lock/unlock 來回面對的還是同一個檔案，那份指紋仍然有效；
+     * 只有換資料夾/換檔案才會讓它失效，由 [resetForNewLocation] 額外清掉。
+     */
+    private fun resetToLockedState() {
         session.lock()
         masterPasswordCache?.wipe()
         masterPasswordCache = null
@@ -430,5 +619,11 @@ class VaultViewModel : ViewModel() {
     /** 見 [unlockDispatcher] 的 KDoc：讓測試把背景運算換成不切執行緒的 dispatcher。 */
     internal fun setUnlockDispatcherForTest(dispatcher: CoroutineDispatcher) {
         unlockDispatcher = dispatcher
+    }
+
+    internal companion object {
+        /** 規格 §4.2：連 [KdfParams.FLOOR] 都跑超過預算時要告知使用者。 */
+        internal const val SLOW_KDF_NOTICE =
+            "這台裝置跑加密運算較慢，之後每次解鎖大約需要數秒，屬正常現象"
     }
 }

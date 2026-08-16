@@ -20,16 +20,22 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.hintvault.ui.SetupState
+import com.hintvault.ui.VaultUiState
 import com.hintvault.ui.VaultViewModel
 
+/**
+ * 收整個 [VaultUiState] 而非只收 [SetupState]：建立新資料庫是一段數秒的
+ * Argon2 運算，畫面需要 `isCreatingVault`（進度圈）與 `setupError`（失敗訊息），
+ * 這兩個欄位不屬於 [SetupState] 這個狀態機本身。
+ */
 @Composable
-fun SetupScreen(state: SetupState, viewModel: VaultViewModel) {
+fun SetupScreen(uiState: VaultUiState, viewModel: VaultViewModel) {
     val context = LocalContext.current
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.onFolderChosen(context, uri)
     }
 
-    when (state) {
+    when (val state = uiState.setup) {
         SetupState.CheckingFolder -> CircularProgressIndicator()
 
         SetupState.NeedsFolderPicker -> Column(Modifier.padding(16.dp)) {
@@ -49,6 +55,7 @@ fun SetupScreen(state: SetupState, viewModel: VaultViewModel) {
             var confirm by remember { mutableStateOf("") }
             Column(Modifier.padding(16.dp)) {
                 Text("這個資料夾裡沒有找到資料庫，設定主密碼建立一個新的（檔名固定為 vault.kdbx）")
+                uiState.setupError?.let { Text(it) }
                 OutlinedTextField(
                     value = password, onValueChange = { password = it },
                     label = { Text("主密碼") }, visualTransformation = PasswordVisualTransformation()
@@ -59,8 +66,13 @@ fun SetupScreen(state: SetupState, viewModel: VaultViewModel) {
                 )
                 Button(
                     onClick = { viewModel.onNewVaultPasswordChosen(context, password.toCharArray()) },
-                    enabled = password.isNotEmpty() && password == confirm
+                    enabled = !uiState.isCreatingVault && password.isNotEmpty() && password == confirm
                 ) { Text("建立") }
+                // 與 UnlockScreen 的 isUnlocking 同理：建立資料庫要跑一次完整的
+                // Argon2（實測 2.2-5.9 秒），沒有進度指示會被當成當機。
+                if (uiState.isCreatingVault) {
+                    CircularProgressIndicator()
+                }
             }
         }
 

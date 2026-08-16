@@ -18,8 +18,10 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +34,7 @@ import com.hintvault.vault.Entry
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
+    val uiState by viewModel.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
     val filtered = remember(entries, query) {
         entries
@@ -60,6 +63,12 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
         }
     ) { padding ->
         Column(Modifier.padding(padding)) {
+            // 規格 §4.2 的慢速裝置提醒：建立資料庫成功後畫面已經切到這裡，
+            // SetupScreen 早就不在畫面上了，所以這句話得在這裡講。
+            uiState.setupError?.let { message ->
+                Text(message)
+                TextButton(onClick = { viewModel.clearSetupError() }) { Text("知道了") }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },

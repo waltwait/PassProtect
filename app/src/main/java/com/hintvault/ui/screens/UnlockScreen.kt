@@ -45,7 +45,10 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
 
     Column(Modifier.padding(16.dp)) {
         when (state.unlockError) {
-            UnlockError.WRONG_PASSWORD -> Text("密碼錯誤，請再試一次")
+            // `Vault.open()` 分不出「密碼錯」與「檔案壞掉/不是 KDBX」（見 Vault.kt 的
+            // WrongPasswordException KDoc），WRONG_PASSWORD 兩者都涵蓋，訊息就必須兩者
+            // 都講——只說「密碼錯誤」會讓拿著壞檔案的使用者一直重打正確的密碼。
+            UnlockError.WRONG_PASSWORD -> Text("密碼錯誤，或檔案已損毀/格式不符")
             UnlockError.UNSUPPORTED_FORMAT ->
                 Text("此資料庫使用本 app 不支援的格式（例如 KeePassXC 用 Argon2id 建立的資料庫），請到 KeePassXC 把 KDF 改回 Argon2d")
             UnlockError.FILE_MISSING -> Text("找不到資料庫檔案")
