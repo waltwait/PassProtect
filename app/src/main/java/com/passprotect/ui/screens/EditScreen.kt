@@ -158,8 +158,16 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                     Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // 常用提示詞是拿來組合的字詞/短句（例如「生日」「寵物名」各存一則，
+                    // 點兩下拼成「生日 + 寵物名」），不是整句互斥的預設值，所以點下去是
+                    // 接到目前提示欄位後面，不是整欄取代掉。
                     uiState.hintSnippets.forEach { snippet ->
-                        AssistChip(onClick = { hint = snippet }, label = { Text(snippet) })
+                        AssistChip(
+                            onClick = {
+                                hint = if (hint.isBlank()) snippet else "$hint + $snippet"
+                            },
+                            label = { Text(snippet) }
+                        )
                     }
                 }
             }

@@ -89,17 +89,13 @@ class UiEndToEndTest {
         composeRule.onNodeWithText("建立").performClick()
 
         // 建立新資料庫這一步會先跑 KdfParams.calibrate()（依序試 DEFAULT(32MiB)→
-        // 24MiB→FLOOR(16MiB)，直到某一級落在 3 秒預算內）。真機實測
-        // （2026-08-16，SM-S9210）用 logcat 交叉確認過：等待期間主執行緒沒有被卡住
-        // （AndroidComposeView 持續在重繪，只是被同時搶 CPU 的 Argon2 運算拖到只剩
-        // ~2fps，不是真的當機或無窮迴圈），但這台裝置當天已經連續跑了非常多輪
-        // instrumented test、KDF 運算不間斷，45 秒、90 秒都在同一台裝置上實測仍不夠
-        // ——懷疑是連續高負載造成的過熱降頻，不是程式邏輯問題，但尚未在裝置降溫、
-        // 只跑這一個測試的乾淨狀態下重新驗證過。時間值先留寬（180 秒），真正的
-        // 診斷結論記在 docs/manual-verification.md，留給裝置冷卻後或另一台裝置
-        // 上重跑確認。
+        // 24MiB→FLOOR(16MiB)，直到某一級落在 3 秒預算內），三級都跑的最壞情況比
+        // 單次 KDF 的 2.2-5.9 秒久一些。2026-08-16 曾在裝置連續跑很多輪測試、過熱
+        // 降頻時觀察到這一步需要 90 秒以上；裝置降溫後單獨重跑遠低於這個時間，
+        // 診斷過程與結論見 docs/manual-verification.md。30 秒涵蓋正常（未過熱）
+        // 狀態下三級校準的合理上限。
         composeRule.waitForIdle()
-        composeRule.waitUntilExactlyOneExists(hasContentDescription("新增"), timeoutMillis = 180_000)
+        composeRule.waitUntilExactlyOneExists(hasContentDescription("新增"), timeoutMillis = 30_000)
         // 「新增」是 FAB 的 contentDescription，不是可見文字，要用
         // onNodeWithContentDescription 找；「標題」「提示」「儲存」在
         // EditScreen 上確實是可見文字（欄位標籤/按鈕文字），用 onNodeWithText。
