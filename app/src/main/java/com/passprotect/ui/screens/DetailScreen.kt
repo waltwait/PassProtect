@@ -168,18 +168,18 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
                                 )
                             }
                         }
-                        Row(verticalAlignment = Alignment.Top) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Filled.VpnKey,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
-                                    .padding(top = 2.dp, end = 8.dp)
-                                    .size(18.dp)
+                                    .size(16.dp)
+                                    .padding(end = 6.dp)
                             )
                             Text(
                                 account.hint,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyMedium,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
