@@ -1,5 +1,10 @@
 package com.passprotect.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -7,27 +12,28 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -56,6 +62,7 @@ import com.passprotect.vault.HistoricalHint
 import java.net.URLEncoder
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.delay
 
 /**
  * 畫面上一組「帳號＋提示」欄位的存檔草稿——[EditScreen] 用它把 Compose 狀態
@@ -115,6 +122,9 @@ private class AccountFieldState(val id: UUID, initialUsername: String, initialHi
     var hint by mutableStateOf(initialHint)
 }
 
+/** 「儲存」按鈕的三個階段——見 [EditScreen] 裡的 `AnimatedContent` 用法。 */
+private enum class SaveButtonPhase { Idle, Saving, Saved }
+
 /**
  * 點「搜尋網址」會導覽去 WebSearchScreen 再導覽回來——Navigation Compose
  * 離開目前畫面時不會把它留在 composition 裡，回來時是重新組合一次，所有
@@ -143,16 +153,28 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     }
     val uiState by viewModel.uiState.collectAsState()
     var didAttemptSave by rememberSaveable { mutableStateOf(false) }
-    var categoryMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val existingCategories = remember(entries) {
         entries.map { it.category }.filter { it.isNotBlank() }.distinct().sorted()
     }
 
+    // 存檔按鈕的三段式動畫狀態。存檔本身是背景跑一次完整 Argon2d KDF
+    // （規格量測約 2.2 秒），這段時間原本按鈕完全沒反應、感覺像卡住；
+    // 現在按下去先進 Saving（轉圈），存完成功後短暫進 Saved（打勾），
+    // 再導覽離開——讓那 2 秒等待跟收尾都有東西看，不是憑空多等。
+    var saveButtonPhase by remember { mutableStateOf(SaveButtonPhase.Idle) }
+
     // 只在成功存檔時離開這個畫面；SaveMessage.Conflict 時必須留在原地，
     // 讓使用者看到規格 §4.4 要求的衝突訊息，不可靜默導覽走。
     LaunchedEffect(uiState.saveMessage) {
-        if (didAttemptSave && uiState.saveMessage is SaveMessage.Saved) {
-            navController.popBackStack()
+        if (!didAttemptSave) return@LaunchedEffect
+        when (uiState.saveMessage) {
+            is SaveMessage.Saved -> {
+                saveButtonPhase = SaveButtonPhase.Saved
+                delay(280) // 打勾動畫留一點時間被看到，才導覽離開
+                navController.popBackStack()
+            }
+            SaveMessage.Error, is SaveMessage.Conflict -> saveButtonPhase = SaveButtonPhase.Idle
+            null -> {}
         }
     }
 
@@ -217,35 +239,24 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                 },
                 modifier = Modifier.fillMaxWidth()
             )
-            ExposedDropdownMenuBox(
-                expanded = categoryMenuExpanded,
-                onExpandedChange = { categoryMenuExpanded = it }
-            ) {
-                PassProtectField(
-                    value = category,
-                    onValueChange = { category = it; categoryMenuExpanded = true },
-                    label = "分類（選填）",
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenuExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
-                )
-                if (existingCategories.isNotEmpty()) {
-                    ExposedDropdownMenu(
-                        expanded = categoryMenuExpanded,
-                        onDismissRequest = { categoryMenuExpanded = false },
-                        // 沒有這個 modifier 時，下拉選單的寬度/可用高度不會正確對齊
-                        // 輸入框、也不會正確扣掉鍵盤佔掉的空間——鍵盤開著的時候
-                        // 選單的定位/大小就會跑掉。這是 Material3 官方文件標明
-                        // 要配 ExposedDropdownMenuBox 用的 modifier。
-                        modifier = Modifier.exposedDropdownSize()
-                    ) {
-                        existingCategories.forEach { name ->
-                            DropdownMenuItem(
-                                text = { Text(name) },
-                                onClick = { category = name; categoryMenuExpanded = false }
-                            )
-                        }
+            // 原本用 ExposedDropdownMenuBox／ExposedDropdownMenu 做這個欄位，但那個
+            // popup 空間不夠時（鍵盤開著、下方可用高度變小）會自動往上長，跟輸入框
+            // 脫節，位置很怪。改成跟下面「常用提示詞」一樣的做法：建議清單直接排在
+            // 欄位下方、正常排版流程裡的一排 chip，不是浮動 popup，永遠只會往下，
+            // 不會因為鍵盤或可用空間而反過來。
+            PassProtectField(
+                value = category,
+                onValueChange = { category = it },
+                label = "分類（選填）",
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (existingCategories.isNotEmpty()) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    existingCategories.forEach { name ->
+                        SuggestionChip(onClick = { category = name }, label = { Text(name) })
                     }
                 }
             }
@@ -318,6 +329,7 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
             Button(
                 onClick = {
                     didAttemptSave = true
+                    saveButtonPhase = SaveButtonPhase.Saving
                     viewModel.saveEntry(
                         entryToSave(
                             existing,
@@ -328,12 +340,38 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                         )
                     )
                 },
-                enabled = title.isNotBlank(),
+                enabled = title.isNotBlank() && saveButtonPhase == SaveButtonPhase.Idle,
                 interactionSource = saveInteractionSource,
                 modifier = Modifier.pressScale(saveInteractionSource)
             ) {
-                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                Text("儲存")
+                AnimatedContent(
+                    targetState = saveButtonPhase,
+                    transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+                    label = "save-button-phase"
+                ) { phase ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        when (phase) {
+                            SaveButtonPhase.Idle -> {
+                                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                                Text("儲存")
+                            }
+                            SaveButtonPhase.Saving -> {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .padding(end = 6.dp),
+                                    strokeWidth = 2.dp,
+                                    color = LocalContentColor.current
+                                )
+                                Text("儲存中…")
+                            }
+                            SaveButtonPhase.Saved -> {
+                                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                                Text("已儲存")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
