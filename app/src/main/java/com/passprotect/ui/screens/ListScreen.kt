@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -150,7 +151,14 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                     },
                     singleLine = true,
                     shape = RoundedCornerShape(50),
-                    modifier = Modifier.fillMaxWidth()
+                    // Material3 OutlinedTextField 預設高度是 56dp，跟 PassProtectField
+                    // 統一用的 52dp 差 4dp——全 app 其他輸入框都是 52dp（EditScreen／
+                    // SetupScreen／UnlockScreen／SettingsScreen 共用同一個
+                    // PassProtectField 元件，天生一致），只有這個搜尋框是獨立的
+                    // OutlinedTextField，得自己補這行才會跟其他欄位一樣高。
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
                 )
             }
             if (categories.isNotEmpty()) {
