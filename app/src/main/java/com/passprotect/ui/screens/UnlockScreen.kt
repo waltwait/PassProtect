@@ -1,6 +1,7 @@
 package com.passprotect.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -8,13 +9,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -39,6 +41,8 @@ import com.passprotect.session.LockState
 import com.passprotect.ui.UnlockError
 import com.passprotect.ui.VaultUiState
 import com.passprotect.ui.VaultViewModel
+import com.passprotect.ui.components.PassProtectField
+import com.passprotect.ui.components.pressScale
 import java.io.File
 
 @Composable
@@ -128,15 +132,21 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
             }
 
             if (state.lockState == LockState.Locked && (usePassword || !state.biometricEnabled)) {
-                OutlinedTextField(
+                PassProtectField(
                     value = password, onValueChange = { password = it },
-                    label = { Text("主密碼") }, visualTransformation = PasswordVisualTransformation(),
+                    label = "主密碼", visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Button(onClick = {
-                    viewModel.unlockWithPassword(password.toCharArray())
-                    password = ""
-                }) { Text("解鎖") }
+                val unlockInteractionSource = remember { MutableInteractionSource() }
+                Button(
+                    onClick = {
+                        viewModel.unlockWithPassword(password.toCharArray())
+                        password = ""
+                    },
+                    interactionSource = unlockInteractionSource,
+                    modifier = Modifier.pressScale(unlockInteractionSource)
+                ) { Text("解鎖") }
             }
 
             if (state.biometricEnabled && !usePassword) {

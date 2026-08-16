@@ -87,7 +87,7 @@ fun WebSearchScreen(query: String, navController: NavController) {
                     } catch (_: Exception) {
                         query
                     }
-                    loadUrl("https://duckduckgo.com/html/?q=" + URLEncoder.encode(decodedQuery, "UTF-8"))
+                    loadUrl("https://www.google.com/search?q=" + URLEncoder.encode(decodedQuery, "UTF-8"))
                 }
             }
         )

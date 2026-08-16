@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -27,7 +28,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -48,6 +49,8 @@ import com.passprotect.crypto.BiometricUnlock
 import com.passprotect.crypto.WrappedKeyStore
 import com.passprotect.ui.VaultUiState
 import com.passprotect.ui.VaultViewModel
+import com.passprotect.ui.components.PassProtectField
+import com.passprotect.ui.components.pressScale
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,28 +97,24 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline
             )
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = newSnippet,
-                    onValueChange = { newSnippet = it },
-                    label = { Text("新增提示詞") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = {
-                        viewModel.addHintSnippet(newSnippet)
-                        newSnippet = ""
-                    },
-                    enabled = newSnippet.isNotBlank()
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = "新增")
-                }
-            }
+            PassProtectField(
+                value = newSnippet,
+                onValueChange = { newSnippet = it },
+                label = "新增提示詞",
+                singleLine = true,
+                trailingIcon = {
+                    IconButton(
+                        onClick = {
+                            viewModel.addHintSnippet(newSnippet)
+                            newSnippet = ""
+                        },
+                        enabled = newSnippet.isNotBlank()
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "新增")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
             if (uiState.hintSnippets.isNotEmpty()) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
@@ -177,16 +176,19 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
             HorizontalDivider()
 
             SettingsSectionLabel(Icons.Filled.Password, "變更主密碼")
-            OutlinedTextField(
+            PassProtectField(
                 value = newPassword, onValueChange = { newPassword = it },
-                label = { Text("新主密碼") }, visualTransformation = PasswordVisualTransformation(),
+                label = "新主密碼", visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth()
             )
-            OutlinedTextField(
+            PassProtectField(
                 value = confirmPassword, onValueChange = { confirmPassword = it },
-                label = { Text("確認新主密碼") }, visualTransformation = PasswordVisualTransformation(),
+                label = "確認新主密碼", visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth()
             )
+            val changeInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             Button(
                 onClick = {
                     val biometric = if (uiState.biometricEnabled) currentBiometric() else null
@@ -194,7 +196,9 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                     newPassword = ""
                     confirmPassword = ""
                 },
-                enabled = newPassword.isNotEmpty() && newPassword == confirmPassword
+                enabled = newPassword.isNotEmpty() && newPassword == confirmPassword,
+                interactionSource = changeInteractionSource,
+                modifier = Modifier.pressScale(changeInteractionSource)
             ) { Text("變更") }
         }
     }

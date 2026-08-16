@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.WindowManager
+import com.passprotect.BuildConfig
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
@@ -52,10 +53,13 @@ class MainActivity : FragmentActivity() {
 
         // 規格要求：畫面內容含密碼提示，不可被系統截圖或在「最近使用」
         // 清單裡露出縮圖。必須在 setContent 之前設，否則第一幀會漏一下。
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // debug build 放行，方便開發時截圖回報 UI；release 一律鎖住。
+        if (!BuildConfig.DEBUG) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
 
         // FLAG_SECURE 把「最近使用」卡片的畫面內容整個遮住，使用者在那個畫面
         // 唯一看得到的就是系統畫的「圖示 + app 名稱」那條列——不設定的話它是
