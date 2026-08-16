@@ -15,7 +15,7 @@ class EntryRedactionTest {
         val entry = Entry(
             id = UUID.randomUUID(),
             title = "github.com",
-            hint = secret,
+            accounts = listOf(Account(id = UUID.randomUUID(), hint = secret)),
             modifiedAt = Instant.parse("2026-08-13T00:00:00Z")
         )
 
@@ -26,17 +26,14 @@ class EntryRedactionTest {
     }
 
     @Test
-    fun entryToStringDoesNotContainAccount() {
-        val account = "user@example.com"
-        val entry = Entry(
-            id = UUID.randomUUID(),
-            title = "github.com",
-            account = account,
-            hint = secret,
-            modifiedAt = Instant.parse("2026-08-13T00:00:00Z")
-        )
+    fun accountToStringDoesNotContainHintOrUsername() {
+        val username = "user@example.com"
+        val account = Account(id = UUID.randomUUID(), username = username, hint = secret)
 
-        assertFalse("toString 不可包含帳號內容", entry.toString().contains(account))
+        val rendered = account.toString()
+
+        assertFalse("toString 不可包含提示內容", rendered.contains(secret))
+        assertFalse("toString 不可包含帳號內容", rendered.contains(username))
     }
 
     @Test
@@ -55,21 +52,27 @@ class EntryRedactionTest {
         val entry = Entry(
             id = UUID.randomUUID(),
             title = "gmail.com",
-            hint = secret,
-            modifiedAt = Instant.parse("2026-08-13T00:00:00Z"),
-            history = listOf(HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), secret))
+            accounts = listOf(
+                Account(
+                    id = UUID.randomUUID(),
+                    hint = secret,
+                    history = listOf(HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), secret))
+                )
+            ),
+            modifiedAt = Instant.parse("2026-08-13T00:00:00Z")
         )
 
         assertFalse(listOf(entry).toString().contains(secret))
     }
 
     @Test
-    fun equalsStillComparesHint() {
+    fun equalsStillComparesAccounts() {
         // 只覆寫 toString，不可動到 data class 生成的 equals
         val id = UUID.randomUUID()
         val at = Instant.parse("2026-08-13T00:00:00Z")
-        val a = Entry(id = id, title = "t", hint = "hint-a", modifiedAt = at)
-        val b = Entry(id = id, title = "t", hint = "hint-b", modifiedAt = at)
+        val accountId = UUID.randomUUID()
+        val a = Entry(id = id, title = "t", accounts = listOf(Account(id = accountId, hint = "hint-a")), modifiedAt = at)
+        val b = Entry(id = id, title = "t", accounts = listOf(Account(id = accountId, hint = "hint-b")), modifiedAt = at)
 
         assertFalse(a == b)
         assertTrue(a == a.copy())

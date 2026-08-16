@@ -10,6 +10,7 @@ import com.passprotect.storage.FileBackupStore
 import com.passprotect.storage.SafVaultFile
 import com.passprotect.storage.SaveResult
 import com.passprotect.storage.VaultRepository
+import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
 import com.passprotect.vault.HistoricalHint
 import com.passprotect.vault.Vault
@@ -53,11 +54,16 @@ class EndToEndTest {
         val entry = Entry(
             id = UUID.randomUUID(),
             title = "github.com",
-            hint = "提示：貓的名字 + 生日",
-            modifiedAt = Instant.now(),
-            history = listOf(
-                HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "舊提示：國中同學的綽號")
-            )
+            accounts = listOf(
+                Account(
+                    id = UUID.randomUUID(),
+                    hint = "提示：貓的名字 + 生日",
+                    history = listOf(
+                        HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "舊提示：國中同學的綽號")
+                    )
+                )
+            ),
+            modifiedAt = Instant.now()
         )
         vault.upsert(entry)
 
@@ -70,9 +76,10 @@ class EndToEndTest {
         val reopened = Vault.open(loaded.bytes, pw())
         val got = reopened.entries().single()
         assertEquals("github.com", got.title)
-        assertEquals("提示：貓的名字 + 生日", got.hint)
-        assertEquals(1, got.history.size)
-        assertEquals("舊提示：國中同學的綽號", got.history.single().hint)
+        val gotAccount = got.accounts.single()
+        assertEquals("提示：貓的名字 + 生日", gotAccount.hint)
+        assertEquals(1, gotAccount.history.size)
+        assertEquals("舊提示：國中同學的綽號", gotAccount.history.single().hint)
 
         // 5. 模擬同步工具在背後改檔 → 必須拒絕覆蓋
         dbFile.writeBytes(dbFile.readBytes() + byteArrayOf(0))
@@ -97,11 +104,16 @@ class EndToEndTest {
             Entry(
                 id = UUID.randomUUID(),
                 title = "github.com",
-                hint = "提示：貓的名字 + 生日",
-                modifiedAt = Instant.now(),
-                history = listOf(
-                    HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "舊提示：國中同學的綽號")
-                )
+                accounts = listOf(
+                    Account(
+                        id = UUID.randomUUID(),
+                        hint = "提示：貓的名字 + 生日",
+                        history = listOf(
+                            HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "舊提示：國中同學的綽號")
+                        )
+                    )
+                ),
+                modifiedAt = Instant.now()
             )
         )
         out.writeBytes(vault.serialize(pw()))

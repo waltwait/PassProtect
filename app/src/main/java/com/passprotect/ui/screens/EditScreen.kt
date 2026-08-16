@@ -1,39 +1,53 @@
 package com.passprotect.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.SaveMessage
 import com.passprotect.ui.VaultViewModel
+import com.passprotect.ui.components.PassProtectField
+import com.passprotect.ui.components.pressScale
+import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
 import com.passprotect.vault.HistoricalHint
 import java.net.URLEncoder
@@ -41,14 +55,22 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * 組出要存檔的 [Entry]，並在這裡（也只有這裡）決定要不要往 [Entry.history] 添一筆。
+ * 畫面上一組「帳號＋提示」欄位的存檔草稿——[EditScreen] 用它把 Compose 狀態
+ * 交給 [entryToSave]，讓後者維持純函式、JVM 測試碰得到。
+ */
+internal data class AccountDraft(val id: UUID, val username: String = "", val hint: String)
+
+/**
+ * 組出要存檔的 [Entry]，並在這裡（也只有這裡）決定每一組帳號要不要往
+ * [Account.history] 添一筆。
  *
- * 規則：只有「修改既有記錄」且「提示真的變了」才把**舊的**提示存成
+ * 規則：只有「修改既有帳號」且「提示真的變了」才把**舊的**提示存成
  * [HistoricalHint]——那正是 `HistoryScreen` 要救援的東西（改了提示，但某台裝置
- * 還在用舊密碼）。只改標題、什麼都沒改、或新增記錄都不寫歷史，否則歷史清單會被
- * 一堆「跟現在一模一樣」的雜訊塞滿，反而看不出真正變過幾次。
- * `HistoryScreen` 顯示時自己會依 `at` 由新到舊排序，所以這裡前插後插都可以，
- * 選前插只是讓底層順序也跟顯示順序一致。
+ * 還在用舊密碼）。只改標題、什麼都沒改、或新增帳號都不寫歷史，否則歷史清單會被
+ * 一堆「跟現在一模一樣」的雜訊塞滿，反而看不出真正變過幾次。改帳號名稱同理不算
+ * 改提示。用 [AccountDraft.id] 對回 [existing] 裡的舊帳號——這個 id 在畫面上
+ * 新增一組帳號時就地產生，編輯既有帳號時延續舊的，藉此分辨「這組是本來就有的」
+ * 還是「這組是這次新加的」。
  *
  * 從 composable 的 onClick 抽成獨立函式，是為了讓這條規則能在 JVM 單元測試裡
  * 直接驗證——Compose 的畫面本身只有真機 instrumented 測試碰得到。
@@ -59,27 +81,35 @@ import java.util.UUID
 internal fun entryToSave(
     existing: Entry?,
     title: String,
-    account: String = existing?.account.orEmpty(),
     url: String = existing?.url.orEmpty(),
     category: String = existing?.category.orEmpty(),
-    hint: String,
+    accounts: List<AccountDraft>,
     now: Instant = Instant.now()
 ): Entry {
-    val history = when {
-        existing == null -> emptyList()
-        existing.hint != hint -> listOf(HistoricalHint(at = now, hint = existing.hint)) + existing.history
-        else -> existing.history
+    val existingById = existing?.accounts?.associateBy { it.id }.orEmpty()
+    val resultAccounts = accounts.map { draft ->
+        val old = existingById[draft.id]
+        val history = when {
+            old == null -> emptyList()
+            old.hint != draft.hint -> listOf(HistoricalHint(at = now, hint = old.hint)) + old.history
+            else -> old.history
+        }
+        Account(id = draft.id, username = draft.username, hint = draft.hint, history = history)
     }
     return Entry(
         id = existing?.id ?: UUID.randomUUID(),
         title = title,
-        account = account,
         url = url,
         category = category,
-        hint = hint,
-        modifiedAt = now,
-        history = history
+        accounts = resultAccounts,
+        modifiedAt = now
     )
+}
+
+/** [EditScreen] 裡一組帳號欄位的可變狀態——`username`/`hint` 各自獨立可觀察，改其中一個不會重組整個列表。 */
+private class AccountFieldState(val id: UUID, initialUsername: String, initialHint: String) {
+    var username by mutableStateOf(initialUsername)
+    var hint by mutableStateOf(initialHint)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,12 +117,16 @@ internal fun entryToSave(
 fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
     val existing = entryId?.let { id -> entries.firstOrNull { it.id == id } }
     var title by remember { mutableStateOf(existing?.title.orEmpty()) }
-    var account by remember { mutableStateOf(existing?.account.orEmpty()) }
     var url by remember { mutableStateOf(existing?.url.orEmpty()) }
     var category by remember { mutableStateOf(existing?.category.orEmpty()) }
-    var hint by remember { mutableStateOf(existing?.hint.orEmpty()) }
+    val accountFields = remember {
+        val initial = existing?.accounts?.takeIf { it.isNotEmpty() }
+            ?: listOf(Account(id = UUID.randomUUID(), hint = ""))
+        mutableStateListOf(*initial.map { AccountFieldState(it.id, it.username, it.hint) }.toTypedArray())
+    }
     val uiState by viewModel.uiState.collectAsState()
     var didAttemptSave by remember { mutableStateOf(false) }
+    var categoryMenuExpanded by remember { mutableStateOf(false) }
     val existingCategories = remember(entries) {
         entries.map { it.category }.filter { it.isNotBlank() }.distinct().sorted()
     }
@@ -135,7 +169,10 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
         Column(
             Modifier
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                // 帳號清單長度不固定——新增幾組帳號後內容很容易超出一個螢幕高度，
+                // 沒有這行的話畫面下半部（含「儲存」按鈕）會被裁掉、滑不到。
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (didAttemptSave) {
@@ -147,91 +184,134 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                     Text("存檔失敗，請再試一次")
                 }
             }
-            OutlinedTextField(
-                value = title, onValueChange = { title = it }, label = { Text("標題") },
+            PassProtectField(
+                value = title, onValueChange = { title = it }, label = "標題",
                 modifier = Modifier.fillMaxWidth()
             )
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            PassProtectField(
+                value = url, onValueChange = { url = it }, label = "網址（選填）",
+                trailingIcon = {
+                    IconButton(onClick = {
+                        val query = URLEncoder.encode(title.ifBlank { "" }, "UTF-8")
+                        navController.navigate("websearch/$query")
+                    }) {
+                        Icon(Icons.Filled.Search, contentDescription = "搜尋網址")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            ExposedDropdownMenuBox(
+                expanded = categoryMenuExpanded,
+                onExpandedChange = { categoryMenuExpanded = it }
             ) {
-                OutlinedTextField(
-                    value = url, onValueChange = { url = it }, label = { Text("網址（選填）") },
-                    modifier = Modifier.weight(1f)
+                PassProtectField(
+                    value = category,
+                    onValueChange = { category = it; categoryMenuExpanded = true },
+                    label = "分類（選填）",
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenuExpanded) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
                 )
-                IconButton(onClick = {
-                    val query = URLEncoder.encode(title.ifBlank { "" }, "UTF-8")
-                    navController.navigate("websearch/$query")
-                }) {
-                    Icon(Icons.Filled.Search, contentDescription = "搜尋網址")
-                }
-            }
-            OutlinedTextField(
-                value = account, onValueChange = { account = it }, label = { Text("帳號（選填）") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = category, onValueChange = { category = it }, label = { Text("分類（選填）") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            if (existingCategories.isNotEmpty()) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    existingCategories.forEach { name ->
-                        SuggestionChip(onClick = { category = name }, label = { Text(name) })
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = hint, onValueChange = { hint = it }, label = { Text("提示") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            if (uiState.hintSnippets.isNotEmpty()) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // 常用提示詞是拿來組合的字詞/短句（例如「生日」「寵物名」各存一則，
-                    // 點兩下拼成「生日 + 寵物名」），不是整句互斥的預設值，所以點下去是
-                    // 接到目前提示欄位後面，不是整欄取代掉。
-                    uiState.hintSnippets.forEach { snippet ->
-                        AssistChip(
-                            onClick = {
-                                hint = if (hint.isBlank()) snippet else "$hint + $snippet"
-                            },
-                            label = { Text(snippet) }
-                        )
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        didAttemptSave = true
-                        viewModel.saveEntry(
-                            entryToSave(
-                                existing,
-                                title = title,
-                                account = account,
-                                url = url,
-                                category = category,
-                                hint = hint
+                if (existingCategories.isNotEmpty()) {
+                    ExposedDropdownMenu(
+                        expanded = categoryMenuExpanded,
+                        onDismissRequest = { categoryMenuExpanded = false }
+                    ) {
+                        existingCategories.forEach { name ->
+                            DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = { category = name; categoryMenuExpanded = false }
                             )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            // 一個標題/網址底下可能不只一組帳號（例如同一個網域下私人跟工作各一組），
+            // 所以帳號＋提示是可以新增/刪除的清單，標題/網址/分類則整筆記錄只有一份。
+            accountFields.forEachIndexed { index, field ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (accountFields.size > 1) "帳號 ${index + 1}" else "帳號",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    },
-                    enabled = title.isNotBlank()
-                ) {
-                    Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                    Text("儲存")
+                        if (accountFields.size > 1) {
+                            IconButton(onClick = { accountFields.removeAt(index) }) {
+                                Icon(Icons.Filled.Close, contentDescription = "刪除這組帳號")
+                            }
+                        }
+                    }
+                    PassProtectField(
+                        value = field.username, onValueChange = { field.username = it }, label = "帳號（選填）",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    PassProtectField(
+                        value = field.hint, onValueChange = { field.hint = it }, label = "提示",
+                        monospace = true,
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { viewModel.addHintSnippet(field.hint) },
+                                enabled = field.hint.isNotBlank()
+                            ) {
+                                Icon(Icons.Filled.Star, contentDescription = "存成常用提示詞")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (uiState.hintSnippets.isNotEmpty()) {
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 常用提示詞是拿來組合的字詞/短句（例如「生日」「寵物名」各存一則，
+                            // 點兩下拼成「生日 + 寵物名」），不是整句互斥的預設值，所以點下去是
+                            // 接到這一組帳號的提示欄位後面，不是整欄取代掉。
+                            uiState.hintSnippets.forEach { snippet ->
+                                AssistChip(
+                                    onClick = {
+                                        field.hint = if (field.hint.isBlank()) snippet else "${field.hint} + $snippet"
+                                    },
+                                    label = { Text(snippet) }
+                                )
+                            }
+                        }
+                    }
                 }
-                IconButton(
-                    onClick = { viewModel.addHintSnippet(hint) },
-                    enabled = hint.isNotBlank()
-                ) {
-                    Icon(Icons.Filled.Star, contentDescription = "存成常用提示詞")
-                }
+            }
+            TextButton(onClick = { accountFields.add(AccountFieldState(UUID.randomUUID(), "", "")) }) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                Text("新增帳號")
+            }
+
+            val saveInteractionSource = remember { MutableInteractionSource() }
+            Button(
+                onClick = {
+                    didAttemptSave = true
+                    viewModel.saveEntry(
+                        entryToSave(
+                            existing,
+                            title = title,
+                            url = url,
+                            category = category,
+                            accounts = accountFields.map { AccountDraft(it.id, it.username, it.hint) }
+                        )
+                    )
+                },
+                enabled = title.isNotBlank(),
+                interactionSource = saveInteractionSource,
+                modifier = Modifier.pressScale(saveInteractionSource)
+            ) {
+                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                Text("儲存")
             }
         }
     }

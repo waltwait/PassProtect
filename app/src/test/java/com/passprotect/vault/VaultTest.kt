@@ -16,6 +16,20 @@ import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * 這批測試絕大多數只關心「一筆記錄剛好一組帳號」的情境，[Entry] 的多帳號
+ * 清單對它們來說是不必要的雜訊。這幾個 test-only 的擴充屬性/函式把
+ * `entry.accounts.single()` 這件事包起來，讓測試維持原本「entry.hint」
+ * 「entry.copy(hint = ...)」這種讀法，同時仍然是真的透過 [Entry.accounts]。
+ */
+private val Entry.hint: String get() = accounts.single().hint
+private val Entry.account: String get() = accounts.single().username
+private val Entry.history: List<HistoricalHint> get() = accounts.single().history
+private fun Entry.withHint(hint: String) = copy(accounts = listOf(accounts.single().copy(hint = hint)))
+private fun Entry.withAccount(account: String) = copy(accounts = listOf(accounts.single().copy(username = account)))
+private fun Entry.withHistory(history: List<HistoricalHint>) =
+    copy(accounts = listOf(accounts.single().copy(history = history)))
+
 class VaultTest {
 
     // 單元測試希望用最小成本，只求功能正確；但 Vault.create() 現在會把低於
@@ -29,12 +43,17 @@ class VaultTest {
     private fun sampleEntry(title: String = "github.com") = Entry(
         id = UUID.randomUUID(),
         title = title,
-        account = "user@example.com",
-        hint = "提示：貓的名字 + 生日",
-        modifiedAt = Instant.parse("2026-08-13T00:00:00Z"),
-        history = listOf(
-            HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "舊提示：國中同學的綽號")
-        )
+        accounts = listOf(
+            Account(
+                id = UUID.randomUUID(),
+                username = "user@example.com",
+                hint = "提示：貓的名字 + 生日",
+                history = listOf(
+                    HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "舊提示：國中同學的綽號")
+                )
+            )
+        ),
+        modifiedAt = Instant.parse("2026-08-13T00:00:00Z")
     )
 
     @Test
@@ -63,7 +82,7 @@ class VaultTest {
     fun upsertWithBlankAccountRoundTripsAsBlank() {
         // account 選填——留白是正常路徑，不該在 KDBX 裡憑空長出 null 或例外。
         val vault = Vault.create(fastKdf)
-        val entry = sampleEntry().copy(account = "")
+        val entry = sampleEntry().withAccount("")
         vault.upsert(entry)
 
         val reopened = Vault.open(vault.serialize(pw()), pw())
@@ -189,7 +208,7 @@ class VaultTest {
         val vault = Vault.create(fastKdf)
         val entry = sampleEntry()
         vault.upsert(entry)
-        vault.upsert(entry.copy(hint = "改過的提示"))
+        vault.upsert(entry.withHint("改過的提示"))
 
         assertEquals(1, vault.entries().size)
         assertEquals("改過的提示", vault.entries().single().hint)
@@ -248,14 +267,14 @@ class VaultTest {
         // 從 2 筆 history 減成 1 筆時，hist.2.* 必須消失，
         // 否則舊欄位會殘留成幽靈資料
         val vault = Vault.create(fastKdf)
-        val entry = sampleEntry().copy(
-            history = listOf(
+        val entry = sampleEntry().withHistory(
+            listOf(
                 HistoricalHint(Instant.parse("2026-06-20T08:30:00Z"), "較新"),
                 HistoricalHint(Instant.parse("2026-01-04T10:00:00Z"), "較舊")
             )
         )
         vault.upsert(entry)
-        vault.upsert(entry.copy(history = listOf(entry.history.first())))
+        vault.upsert(entry.withHistory(listOf(entry.history.first())))
 
         val raw = vault.rawEntryProperties(entry.id)
         assertEquals("較新", raw["hist.1.hint"])
@@ -391,7 +410,7 @@ class VaultTest {
         vault.corruptIdMarkerForTest(entry.id, entry.id.toString().uppercase())
 
         val listed = vault.entries().single()
-        vault.upsert(listed.copy(hint = "改過的提示"))
+        vault.upsert(listed.withHint("改過的提示"))
 
         assertEquals(1, vault.entries().size)
         assertEquals("改過的提示", vault.entries().single().hint)
@@ -410,7 +429,7 @@ class VaultTest {
         vault.upsert(entry)
         vault.setRawPropertyForTest(entry.id, "hist.note", "不是本 app 寫的")
 
-        vault.upsert(entry.copy(hint = "改過的提示"))
+        vault.upsert(entry.withHint("改過的提示"))
 
         val raw = vault.rawEntryProperties(entry.id)
         assertEquals("不是本 app 寫的", raw["hist.note"])
@@ -426,7 +445,7 @@ class VaultTest {
 
         val vault = Vault.open(original, pw)
         val listed = vault.entries().single()
-        vault.upsert(listed.copy(hint = "手機上改的提示"))
+        vault.upsert(listed.withHint("手機上改的提示"))
 
         val reopened = Vault.open(vault.serialize(pw), pw)
         assertEquals("不可複製成兩份", 1, reopened.entries().size)

@@ -149,9 +149,13 @@ class Vault private constructor(
             target.setProperty(PROP_UUID_MARKER, entry.id.toString())
         }
         target.setProperty(PROP_TITLE, entry.title)
-        target.setProperty(PROP_USERNAME, entry.account)
         target.setProperty(PROP_URL, entry.url)
-        target.setProperty(PROP_PASSWORD, entry.hint)
+
+        // 第一組帳號沿用原生 UserName/Password 欄位——跟 KeePassXC 等桌面端的
+        // 相容性由這一組帳號扛，不因為支援多帳號而受影響。
+        val primary = entry.accounts.firstOrNull() ?: Account(id = entry.id, hint = "")
+        target.setProperty(PROP_USERNAME, primary.username)
+        target.setProperty(PROP_PASSWORD, primary.hint)
 
         // 先清掉所有既有的 hist.<n>.(at|hint) 欄位，再寫入新的。
         // 少了這一步，history 變短時舊欄位會殘留成幽靈資料。用 HistoryCodec
@@ -159,7 +163,13 @@ class Vault private constructor(
         // 湊巧以 "hist." 開頭但格式不同的屬性會被當垃圾清掉。
         target.propertyNames.filter { HistoryCodec.isHistoryKey(it) }
             .forEach { target.removeProperty(it) }
-        HistoryCodec.encode(entry.history).forEach { (k, v) -> target.setProperty(k, v) }
+        HistoryCodec.encode(primary.history).forEach { (k, v) -> target.setProperty(k, v) }
+
+        // 第二組以後的帳號存進 acct.<n>.* 自訂欄位，同一套「先清光舊的再寫新的」
+        // 邏輯，理由同上。
+        target.propertyNames.filter { AccountCodec.isAccountKey(it) }
+            .forEach { target.removeProperty(it) }
+        AccountCodec.encode(entry.accounts.drop(1)).forEach { (k, v) -> target.setProperty(k, v) }
     }
 
     /**
@@ -269,15 +279,19 @@ class Vault private constructor(
     private fun DomEntryWrapper.toDomainEntry(): Entry {
         val props = propertyNames.associateWith { getProperty(it) ?: "" }
         val parentGroup = parent
+        val primary = Account(
+            id = domainId(),
+            username = props[PROP_USERNAME].orEmpty(),
+            hint = props[PROP_PASSWORD].orEmpty(),
+            history = HistoryCodec.decode(props)
+        )
         return Entry(
             id = domainId(),
             title = props[PROP_TITLE].orEmpty(),
-            account = props[PROP_USERNAME].orEmpty(),
             url = props[PROP_URL].orEmpty(),
             category = if (parentGroup == null || parentGroup.isRootGroup) "" else parentGroup.name.orEmpty(),
-            hint = props[PROP_PASSWORD].orEmpty(),
-            modifiedAt = lastModificationTime?.toInstant() ?: Instant.EPOCH,
-            history = HistoryCodec.decode(props)
+            accounts = listOf(primary) + AccountCodec.decode(props),
+            modifiedAt = lastModificationTime?.toInstant() ?: Instant.EPOCH
         )
     }
 

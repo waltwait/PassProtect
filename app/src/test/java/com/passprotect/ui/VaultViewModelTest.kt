@@ -189,7 +189,7 @@ class VaultViewModelTest {
         val entry = com.passprotect.vault.Entry(
             id = java.util.UUID.randomUUID(),
             title = "github.com",
-            hint = "提示",
+            accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
             modifiedAt = java.time.Instant.now()
         )
         vm.saveEntry(entry)
@@ -216,7 +216,7 @@ class VaultViewModelTest {
         val entry = com.passprotect.vault.Entry(
             id = java.util.UUID.randomUUID(),
             title = "conflict-test",
-            hint = "提示",
+            accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
             modifiedAt = java.time.Instant.now()
         )
         vm.saveEntry(entry)
@@ -233,7 +233,7 @@ class VaultViewModelTest {
         val entry = com.passprotect.vault.Entry(
             id = java.util.UUID.randomUUID(),
             title = "to-delete",
-            hint = "提示",
+            accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
             modifiedAt = java.time.Instant.now()
         )
         vm.saveEntry(entry)
@@ -314,7 +314,7 @@ class VaultViewModelTest {
         val entry = com.passprotect.vault.Entry(
             id = java.util.UUID.randomUUID(),
             title = "race",
-            hint = "提示",
+            accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
             modifiedAt = java.time.Instant.now()
         )
         vm.saveEntry(entry)
@@ -350,7 +350,7 @@ class VaultViewModelTest {
             com.passprotect.vault.Entry(
                 id = java.util.UUID.randomUUID(),
                 title = "會失敗",
-                hint = "提示",
+                accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
                 modifiedAt = java.time.Instant.now()
             )
         )
@@ -371,7 +371,7 @@ class VaultViewModelTest {
         val entry = com.passprotect.vault.Entry(
             id = java.util.UUID.randomUUID(),
             title = "to-delete",
-            hint = "提示",
+            accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
             modifiedAt = java.time.Instant.now()
         )
         vm.saveEntry(entry)
@@ -403,7 +403,7 @@ class VaultViewModelTest {
                 com.passprotect.vault.Entry(
                     id = java.util.UUID.randomUUID(),
                     title = "stale",
-                    hint = "提示",
+                    accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
                     modifiedAt = java.time.Instant.now()
                 )
             )
@@ -426,13 +426,23 @@ class VaultViewModelTest {
         val vm = readyViewModel(bytes)
         vm.unlockWithPassword(pw())
 
-        vm.saveEntry(com.passprotect.ui.screens.entryToSave(null, title = "github.com", hint = "舊提示"))
+        vm.saveEntry(
+            com.passprotect.ui.screens.entryToSave(
+                null, title = "github.com",
+                accounts = listOf(com.passprotect.ui.screens.AccountDraft(java.util.UUID.randomUUID(), hint = "舊提示"))
+            )
+        )
         val stored = vm.uiState.value.entries.single()
-        vm.saveEntry(com.passprotect.ui.screens.entryToSave(stored, title = "github.com", hint = "新提示"))
+        vm.saveEntry(
+            com.passprotect.ui.screens.entryToSave(
+                stored, title = "github.com",
+                accounts = listOf(com.passprotect.ui.screens.AccountDraft(stored.accounts.single().id, hint = "新提示"))
+            )
+        )
 
         val updated = vm.uiState.value.entries.single()
-        assertEquals("新提示", updated.hint)
-        assertEquals(listOf("舊提示"), updated.history.map { it.hint })
+        assertEquals("新提示", updated.accounts.single().hint)
+        assertEquals(listOf("舊提示"), updated.accounts.single().history.map { it.hint })
     }
 
     // ---- I2 + I5：建立新資料庫 ----
@@ -537,7 +547,7 @@ class VaultViewModelTest {
             id = java.util.UUID.randomUUID(),
             title = "github.com",
             category = "工作",
-            hint = "提示",
+            accounts = listOf(com.passprotect.vault.Account(id = java.util.UUID.randomUUID(), hint = "提示")),
             modifiedAt = java.time.Instant.now()
         )
         vm.saveEntry(entry)

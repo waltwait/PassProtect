@@ -84,8 +84,8 @@ class UiEndToEndTest {
         }
 
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("主密碼").performTextInput("correct horse battery staple")
-        composeRule.onNodeWithText("確認主密碼").performTextInput("correct horse battery staple")
+        composeRule.onNodeWithContentDescription("主密碼").performTextInput("correct horse battery staple")
+        composeRule.onNodeWithContentDescription("確認主密碼").performTextInput("correct horse battery staple")
         composeRule.onNodeWithText("建立").performClick()
 
         // 建立新資料庫這一步會先跑 KdfParams.calibrate()（依序試 DEFAULT(32MiB)→
@@ -97,13 +97,15 @@ class UiEndToEndTest {
         composeRule.waitForIdle()
         composeRule.waitUntilExactlyOneExists(hasContentDescription("新增"), timeoutMillis = 30_000)
         // 「新增」是 FAB 的 contentDescription，不是可見文字，要用
-        // onNodeWithContentDescription 找；「標題」「提示」「儲存」在
-        // EditScreen 上確實是可見文字（欄位標籤/按鈕文字），用 onNodeWithText。
+        // onNodeWithContentDescription 找；「標題」「提示」輸入框也改用
+        // contentDescription（PassProtectField 把 label 掛在欄位自己的
+        // contentDescription 上，不是可見的 onNodeWithText，見該元件的註解）；
+        // 「儲存」是按鈕上的可見文字，維持 onNodeWithText。
         composeRule.onNodeWithContentDescription("新增").performClick()
 
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("標題").performTextInput("github.com")
-        composeRule.onNodeWithText("提示").performTextInput("提示：貓的名字 + 生日")
+        composeRule.onNodeWithContentDescription("標題").performTextInput("github.com")
+        composeRule.onNodeWithContentDescription("提示").performTextInput("提示：貓的名字 + 生日")
         composeRule.onNodeWithText("儲存").performClick()
 
         // saveEntry() 真的跑一次 Argon2d KDF（背景執行緒，~2.2 秒）才會存檔完成、
@@ -117,11 +119,15 @@ class UiEndToEndTest {
         // 用搜尋框過濾，確認不相關的那筆被濾掉、相關的那筆還在。
         composeRule.onNodeWithContentDescription("新增").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("標題").performTextInput("example.com")
-        composeRule.onNodeWithText("提示").performTextInput("提示：無關的另一筆")
+        composeRule.onNodeWithContentDescription("標題").performTextInput("example.com")
+        composeRule.onNodeWithContentDescription("提示").performTextInput("提示：無關的另一筆")
         composeRule.onNodeWithText("儲存").performClick()
         composeRule.waitUntilExactlyOneExists(hasContentDescription("新增"), timeoutMillis = 15_000)
 
+        // 搜尋框現在預設收合成一個圖示（規格：主畫面不要一開始就佔一大塊搜尋
+        // 匡），要先點開才看得到輸入框。
+        composeRule.onNodeWithContentDescription("搜尋").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("搜尋").performTextInput("github")
         composeRule.waitForIdle()
         composeRule.onNodeWithText("github.com").assertExists()
@@ -131,7 +137,7 @@ class UiEndToEndTest {
         // 是同步操作（VaultSession.lock() 沒有 KDF），waitForIdle() 已足夠。
         composeRule.onNodeWithContentDescription("鎖定").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("主密碼").performTextInput("correct horse battery staple")
+        composeRule.onNodeWithContentDescription("主密碼").performTextInput("correct horse battery staple")
         composeRule.onNodeWithText("解鎖").performClick()
 
         // unlockWithPassword() 同樣真的跑一次 Argon2d KDF 才會回到清單頁，

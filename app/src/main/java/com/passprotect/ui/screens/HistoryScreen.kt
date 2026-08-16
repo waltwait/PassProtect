@@ -22,9 +22,10 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(entryId: UUID, entries: List<Entry>, navController: NavController) {
+fun HistoryScreen(entryId: UUID, accountId: UUID, entries: List<Entry>, navController: NavController) {
     val entry = entries.firstOrNull { it.id == entryId }
-    val history = entry?.history?.sortedByDescending { it.at }.orEmpty()
+    val account = entry?.accounts?.firstOrNull { it.id == accountId }
+    val history = account?.history?.sortedByDescending { it.at }.orEmpty()
 
     Scaffold(
         topBar = {

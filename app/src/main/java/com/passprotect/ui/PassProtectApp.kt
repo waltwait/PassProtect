@@ -59,16 +59,17 @@ fun PassProtectApp(viewModel: VaultViewModel) {
         composable("list") { ListScreen(uiState.entries, navController, viewModel) }
         composable("detail/{entryId}") { backStackEntry ->
             val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
-            DetailScreen(id, uiState.entries, navController, viewModel)
+            DetailScreen(id, uiState.entries, navController)
         }
         composable("edit_new") { EditScreen(null, uiState.entries, navController, viewModel) }
         composable("edit/{entryId}") { backStackEntry ->
             val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
             EditScreen(id, uiState.entries, navController, viewModel)
         }
-        composable("history/{entryId}") { backStackEntry ->
+        composable("history/{entryId}/{accountId}") { backStackEntry ->
             val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
-            HistoryScreen(id, uiState.entries, navController)
+            val accountId = UUID.fromString(backStackEntry.arguments?.getString("accountId"))
+            HistoryScreen(id, accountId, uiState.entries, navController)
         }
         composable("settings") { SettingsScreen(uiState, navController, viewModel) }
         composable("websearch/{query}") { backStackEntry ->
