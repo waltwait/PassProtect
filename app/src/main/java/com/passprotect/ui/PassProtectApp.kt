@@ -14,6 +14,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.passprotect.session.LockState
+import com.passprotect.ui.screens.CategoryEntriesScreen
 import com.passprotect.ui.screens.DetailScreen
 import com.passprotect.ui.screens.EditScreen
 import com.passprotect.ui.screens.HistoryScreen
@@ -57,6 +58,10 @@ fun PassProtectApp(viewModel: VaultViewModel) {
         composable("setup") { SetupScreen(uiState, viewModel) }
         composable("unlock") { UnlockScreen(uiState, viewModel) }
         composable("list") { ListScreen(uiState.entries, navController, viewModel) }
+        composable("category/{categoryName}") { backStackEntry ->
+            val name = backStackEntry.arguments?.getString("categoryName").orEmpty()
+            CategoryEntriesScreen(name, uiState.entries, navController, viewModel)
+        }
         composable("detail/{entryId}") { backStackEntry ->
             val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
             DetailScreen(id, uiState.entries, navController)
