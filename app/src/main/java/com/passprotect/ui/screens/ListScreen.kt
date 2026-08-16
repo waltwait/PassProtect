@@ -9,7 +9,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -163,25 +161,11 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                 )
             }
             if (categories.isNotEmpty()) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    CategoryFolderTile(
-                        label = "全部",
-                        icon = Icons.Filled.FolderOpen,
-                        selected = selectedCategory == null,
-                        onClick = { selectedCategory = null }
-                    )
-                    categories.forEach { name ->
-                        CategoryFolderTile(
-                            label = name,
-                            icon = Icons.Filled.Folder,
-                            selected = selectedCategory == name,
-                            onClick = { selectedCategory = if (selectedCategory == name) null else name }
-                        )
-                    }
-                }
+                CategoryTree(
+                    categories = categories,
+                    selectedCategory = selectedCategory,
+                    onSelect = { selectedCategory = it }
+                )
             }
             if (filtered.isEmpty()) {
                 EmptyEntriesMessage(hasFilter = query.isNotBlank() || selectedCategory != null)
@@ -238,40 +222,95 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
 }
 
 /**
- * 分類篩選改成資料夾造型的小方塊（圖示在上、名稱在下），取代原本純文字的
- * FilterChip——分類本來就對應 KDBX 的群組（資料夾），用資料夾圖示比較貼近
- * 使用者原本對「分類」的想像。互動邏輯不變：點了篩選、再點一次取消，
- * 一次只能選一個。
+ * 分類篩選改成真正的樹狀清單：「全部」是根節點，各分類是往內縮排的子節點，
+ * 左邊一條細直線＋一小段橫線當樹枝——垂直排列，不是橫向那排 chip/方塊。
+ * 分類本身沒有巢狀結構（KDBX 群組目前只有一層），所以樹只有兩層深，但排版
+ * 上就是看得出「全部」底下掛著每個分類的樹狀感。互動邏輯不變：點了篩選、
+ * 再點一次取消，一次只能選一個。
  */
 @Composable
-private fun CategoryFolderTile(
+private fun CategoryTree(
+    categories: List<String>,
+    selectedCategory: String?,
+    onSelect: (String?) -> Unit
+) {
+    Column {
+        CategoryTreeRow(
+            label = "全部",
+            icon = Icons.Filled.FolderOpen,
+            selected = selectedCategory == null,
+            isChild = false,
+            onClick = { onSelect(null) }
+        )
+        categories.forEach { name ->
+            CategoryTreeRow(
+                label = name,
+                icon = Icons.Filled.Folder,
+                selected = selectedCategory == name,
+                isChild = true,
+                onClick = { onSelect(if (selectedCategory == name) null else name) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun CategoryTreeRow(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     selected: Boolean,
+    isChild: Boolean,
     onClick: () -> Unit
 ) {
     val containerColor by androidx.compose.animation.animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
-        label = "folder-tile-container"
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+        label = "tree-row-container"
     )
-    val contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(
+    val contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    Row(
         Modifier
-            .width(72.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .background(containerColor)
             .clickable(onClick = onClick)
-            .padding(vertical = 10.dp, horizontal = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(vertical = 8.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(26.dp))
+        if (isChild) {
+            // 樹枝：一條垂直線接一小段橫線，畫出「這是根節點底下的子節點」的感覺。
+            Box(
+                Modifier
+                    .width(20.dp)
+                    .height(20.dp)
+            ) {
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(top = 0.dp)
+                        .width(10.dp)
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+            }
+        }
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (selected) contentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .size(18.dp)
+                .padding(end = 8.dp)
+        )
         Text(
             label,
-            style = MaterialTheme.typography.labelSmall,
-            color = contentColor,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            style = MaterialTheme.typography.bodyMedium,
+            color = contentColor
         )
     }
 }
