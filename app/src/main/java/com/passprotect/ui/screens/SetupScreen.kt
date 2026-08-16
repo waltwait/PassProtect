@@ -7,6 +7,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -89,6 +90,11 @@ fun SetupScreen(uiState: VaultUiState, viewModel: VaultViewModel) {
             Column(
                 Modifier
                     .fillMaxSize()
+                    // 這個畫面整組內容是垂直置中的，沒有 imePadding 的話鍵盤蓋住的
+                    // 是原本可用高度的下半截，置中計算不會知道要往上讓——欄位跟著
+                    // 鍵盤蓋住。imePadding 先把可用高度收小，置中才會真的中在
+                    // 鍵盤之上的可視範圍；內容本身很短，不需要另外加捲動。
+                    .imePadding()
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
                 horizontalAlignment = Alignment.CenterHorizontally

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
@@ -86,6 +87,10 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
     Column(
         Modifier
             .fillMaxSize()
+            // 主密碼欄位刻意放在螢幕下半部（貼近指紋感應器位置），沒有這行的話
+            // 鍵盤一彈出正好蓋住它。imePadding 讓可用高度縮小，78/22 的比例會在
+            // 縮小後的範圍裡重新計算，欄位跟著往上讓，不會被鍵盤蓋住。
+            .imePadding()
             .padding(24.dp)
     ) {
         // 把整組內容往下推，讓圖示落在螢幕下半部——比較貼近實體/螢幕下指紋

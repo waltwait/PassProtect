@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -208,6 +209,10 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
         Column(
             Modifier
                 .padding(padding)
+                // 鍵盤彈出時把可視範圍往上收，讓下面的 verticalScroll 把「目前
+                // 聚焦的欄位還在鍵盤後面」這件事算進可視範圍內，捲動才會真的把
+                // 欄位捲到鍵盤上方，不是捲到一個仍被鍵盤蓋住的位置。
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 // 帳號清單長度不固定——新增幾組帳號後內容很容易超出一個螢幕高度，
                 // 沒有這行的話畫面下半部（含「儲存」按鈕）會被裁掉、滑不到。
