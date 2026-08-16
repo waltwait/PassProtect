@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.hintvault"
+    namespace = "com.passprotect"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.hintvault"
+        applicationId = "com.passprotect"
         minSdk = 29
         targetSdk = 36
         versionCode = 1
