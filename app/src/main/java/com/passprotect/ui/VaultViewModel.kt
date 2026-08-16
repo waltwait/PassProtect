@@ -388,6 +388,7 @@ class VaultViewModel : ViewModel() {
                     setup = SetupState.Ready,
                     lockState = LockState.Unlocked,
                     entries = vault.entries(),
+                    hintSnippets = vault.hintSnippets(),
                     unlockError = null,
                     isUnlocking = false
                 )
@@ -422,6 +423,33 @@ class VaultViewModel : ViewModel() {
         val vault = session.withVault { it }
         vault.delete(id)
         _uiState.update { it.copy(saveMessage = null) }
+        viewModelScope.launch { persist(vault) }
+    }
+
+    /**
+     * 存一句常用提示詞，供之後新增/編輯記錄時直接選用。空白字串、已經存過的
+     * 字串都直接忽略——不需要回報錯誤，這不是使用者會在意結果的操作。
+     *
+     * 跟 [saveEntry] 一樣「先同步改記憶體裡的 Vault、uiState 立刻反映，再非同步
+     * 寫檔」：常用提示詞清單本身不參與 [SaveMessage]/衝突偵測（不是一筆
+     * entry，沒有對應的畫面在等 saveMessage），因此不呼叫
+     * `_uiState.update { it.copy(saveMessage = null) }`。
+     */
+    fun addHintSnippet(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return
+        val vault = session.withVault { it }
+        val current = vault.hintSnippets()
+        if (trimmed in current) return
+        vault.setHintSnippets(current + trimmed)
+        _uiState.update { it.copy(hintSnippets = vault.hintSnippets()) }
+        viewModelScope.launch { persist(vault) }
+    }
+
+    fun removeHintSnippet(text: String) {
+        val vault = session.withVault { it }
+        vault.setHintSnippets(vault.hintSnippets() - text)
+        _uiState.update { it.copy(hintSnippets = vault.hintSnippets()) }
         viewModelScope.launch { persist(vault) }
     }
 

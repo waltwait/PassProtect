@@ -1,18 +1,24 @@
 package com.passprotect.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -52,6 +58,7 @@ internal fun entryToSave(
     existing: Entry?,
     title: String,
     account: String = existing?.account.orEmpty(),
+    category: String = existing?.category.orEmpty(),
     hint: String,
     now: Instant = Instant.now()
 ): Entry {
@@ -64,6 +71,7 @@ internal fun entryToSave(
         id = existing?.id ?: UUID.randomUUID(),
         title = title,
         account = account,
+        category = category,
         hint = hint,
         modifiedAt = now,
         history = history
@@ -76,9 +84,13 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     val existing = entryId?.let { id -> entries.firstOrNull { it.id == id } }
     var title by remember { mutableStateOf(existing?.title.orEmpty()) }
     var account by remember { mutableStateOf(existing?.account.orEmpty()) }
+    var category by remember { mutableStateOf(existing?.category.orEmpty()) }
     var hint by remember { mutableStateOf(existing?.hint.orEmpty()) }
     val uiState by viewModel.uiState.collectAsState()
     var didAttemptSave by remember { mutableStateOf(false) }
+    val existingCategories = remember(entries) {
+        entries.map { it.category }.filter { it.isNotBlank() }.distinct().sorted()
+    }
 
     // 只在成功存檔時離開這個畫面；SaveMessage.Conflict 時必須留在原地，
     // 讓使用者看到規格 §4.4 要求的衝突訊息，不可靜默導覽走。
@@ -124,18 +136,52 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
+                value = category, onValueChange = { category = it }, label = { Text("分類（選填）") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (existingCategories.isNotEmpty()) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    existingCategories.forEach { name ->
+                        SuggestionChip(onClick = { category = name }, label = { Text(name) })
+                    }
+                }
+            }
+            OutlinedTextField(
                 value = hint, onValueChange = { hint = it }, label = { Text("提示") },
                 modifier = Modifier.fillMaxWidth()
             )
-            Button(
-                onClick = {
-                    didAttemptSave = true
-                    viewModel.saveEntry(entryToSave(existing, title = title, account = account, hint = hint))
-                },
-                enabled = title.isNotBlank()
-            ) {
-                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                Text("儲存")
+            if (uiState.hintSnippets.isNotEmpty()) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    uiState.hintSnippets.forEach { snippet ->
+                        AssistChip(onClick = { hint = snippet }, label = { Text(snippet) })
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        didAttemptSave = true
+                        viewModel.saveEntry(
+                            entryToSave(existing, title = title, account = account, category = category, hint = hint)
+                        )
+                    },
+                    enabled = title.isNotBlank()
+                ) {
+                    Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                    Text("儲存")
+                }
+                IconButton(
+                    onClick = { viewModel.addHintSnippet(hint) },
+                    enabled = hint.isNotBlank()
+                ) {
+                    Icon(Icons.Filled.Star, contentDescription = "存成常用提示詞")
+                }
             }
         }
     }

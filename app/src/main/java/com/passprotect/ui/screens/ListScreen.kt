@@ -3,14 +3,17 @@ package com.passprotect.ui.screens
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -20,6 +23,7 @@ import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VpnKeyOff
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,9 +55,14 @@ import com.passprotect.vault.Entry
 fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
-    val filtered = remember(entries, query) {
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    val categories = remember(entries) {
+        entries.map { it.category }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val filtered = remember(entries, query, selectedCategory) {
         entries
             .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
+            .filter { selectedCategory == null || it.category == selectedCategory }
             .sortedBy { it.title }
     }
 
@@ -97,8 +106,27 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+            if (categories.isNotEmpty()) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = selectedCategory == null,
+                        onClick = { selectedCategory = null },
+                        label = { Text("全部") }
+                    )
+                    categories.forEach { name ->
+                        FilterChip(
+                            selected = selectedCategory == name,
+                            onClick = { selectedCategory = if (selectedCategory == name) null else name },
+                            label = { Text(name) }
+                        )
+                    }
+                }
+            }
             if (filtered.isEmpty()) {
-                EmptyEntriesMessage(hasQuery = query.isNotBlank())
+                EmptyEntriesMessage(hasFilter = query.isNotBlank() || selectedCategory != null)
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     items(filtered, key = { it.id.toString() }) { entry ->
@@ -126,7 +154,7 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
 }
 
 @Composable
-private fun EmptyEntriesMessage(hasQuery: Boolean) {
+private fun EmptyEntriesMessage(hasFilter: Boolean) {
     Column(
         Modifier
             .fillMaxSize()
@@ -140,7 +168,7 @@ private fun EmptyEntriesMessage(hasQuery: Boolean) {
             tint = MaterialTheme.colorScheme.outline
         )
         Text(
-            if (hasQuery) "沒有符合搜尋的提示" else "還沒有任何提示，點右下角新增第一筆",
+            if (hasFilter) "沒有符合條件的提示" else "還沒有任何提示，點右下角新增第一筆",
             color = MaterialTheme.colorScheme.outline
         )
     }

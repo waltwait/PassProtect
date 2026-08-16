@@ -477,4 +477,71 @@ class VaultViewModelTest {
         vm.clearSetupError()
         assertNull(vm.uiState.value.setupError)
     }
+
+    @Test
+    fun addHintSnippetAppearsInUiStateAndSurvivesReload() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+
+        vm.addHintSnippet("生日 + 寵物名")
+
+        assertEquals(listOf("生日 + 寵物名"), vm.uiState.value.hintSnippets)
+    }
+
+    @Test
+    fun addHintSnippetIgnoresBlankAndDuplicate() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+
+        vm.addHintSnippet("常用句")
+        vm.addHintSnippet("   ")
+        vm.addHintSnippet("常用句")
+
+        assertEquals(listOf("常用句"), vm.uiState.value.hintSnippets)
+    }
+
+    @Test
+    fun removeHintSnippetTakesItOutOfUiState() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+        vm.addHintSnippet("留著")
+        vm.addHintSnippet("刪掉")
+
+        vm.removeHintSnippet("刪掉")
+
+        assertEquals(listOf("留著"), vm.uiState.value.hintSnippets)
+    }
+
+    @Test
+    fun unlockingRestoresPreviouslySavedHintSnippets() = runTest {
+        val vault = Vault.create(fastKdf)
+        vault.setHintSnippets(listOf("既有的常用句"))
+        val bytes = vault.serialize(pw())
+        val vm = readyViewModel(bytes)
+
+        vm.unlockWithPassword(pw())
+
+        assertEquals(listOf("既有的常用句"), vm.uiState.value.hintSnippets)
+    }
+
+    @Test
+    fun savingEntryWithCategoryIsReflectedInUiStateEntries() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vm = readyViewModel(bytes)
+        vm.unlockWithPassword(pw())
+
+        val entry = com.passprotect.vault.Entry(
+            id = java.util.UUID.randomUUID(),
+            title = "github.com",
+            category = "工作",
+            hint = "提示",
+            modifiedAt = java.time.Instant.now()
+        )
+        vm.saveEntry(entry)
+
+        assertEquals("工作", vm.uiState.value.entries.single().category)
+    }
 }

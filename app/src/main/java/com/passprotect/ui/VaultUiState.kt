@@ -34,7 +34,13 @@ data class VaultUiState(
      * 因此由 `ListScreen` 顯示，可由使用者按「知道了」清掉）。刻意不重用
      * [unlockError]：那是 enum、語意是解鎖失敗的原因，這裡兩種都不是解鎖失敗。
      */
-    val setupError: String? = null
+    val setupError: String? = null,
+    /**
+     * 使用者存過的常用提示詞（`Vault.hintSnippets()`）——編輯畫面用來讓使用者
+     * 不用每次都重打同一種提示句型。跟 [entries] 一樣，解鎖成功、或
+     * `addHintSnippet`/`removeHintSnippet` 改動後就同步更新。
+     */
+    val hintSnippets: List<String> = emptyList()
 )
 
 /**

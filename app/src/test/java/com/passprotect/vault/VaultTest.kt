@@ -71,6 +71,90 @@ class VaultTest {
     }
 
     @Test
+    fun upsertWithBlankCategoryStaysUncategorized() {
+        val vault = Vault.create(fastKdf)
+        vault.upsert(sampleEntry())
+
+        assertEquals("", vault.entries().single().category)
+        assertTrue("未分類不該憑空產生一個群組", vault.categories().isEmpty())
+    }
+
+    @Test
+    fun upsertWithCategoryRoundTripsAndListsInCategories() {
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry().copy(category = "工作")
+        vault.upsert(entry)
+
+        val reopened = Vault.open(vault.serialize(pw()), pw())
+        assertEquals("工作", reopened.entries().single().category)
+        assertEquals(listOf("工作"), reopened.categories())
+    }
+
+    @Test
+    fun twoEntriesWithSameCategoryShareOneGroup() {
+        val vault = Vault.create(fastKdf)
+        vault.upsert(sampleEntry("github.com").copy(category = "工作"))
+        vault.upsert(sampleEntry("gitlab.com").copy(category = "工作"))
+
+        // 同一個分類只該有一個群組，不是每筆記錄各建一個同名群組
+        assertEquals(listOf("工作"), vault.categories())
+        assertEquals(2, vault.entries().count { it.category == "工作" })
+    }
+
+    @Test
+    fun changingCategoryMovesEntryToNewGroupAndCreatesItIfMissing() {
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry().copy(category = "工作")
+        vault.upsert(entry)
+
+        vault.upsert(entry.copy(category = "遊戲"))
+
+        val got = vault.entries().single()
+        assertEquals("遊戲", got.category)
+        assertTrue("舊分類群組沒有記錄了，不該再出現在建議清單", "工作" !in vault.categories())
+        assertEquals(listOf("遊戲"), vault.categories())
+    }
+
+    @Test
+    fun changingCategoryBackToUncategorizedMovesEntryToRootGroup() {
+        val vault = Vault.create(fastKdf)
+        val entry = sampleEntry().copy(category = "工作")
+        vault.upsert(entry)
+
+        vault.upsert(entry.copy(category = ""))
+
+        assertEquals("", vault.entries().single().category)
+    }
+
+    @Test
+    fun hintSnippetsRoundTripAndDoNotAppearAsEntries() {
+        val vault = Vault.create(fastKdf)
+        vault.upsert(sampleEntry())
+        vault.setHintSnippets(listOf("生日 + 寵物名", "國中同學綽號"))
+
+        val reopened = Vault.open(vault.serialize(pw()), pw())
+        assertEquals(listOf("生日 + 寵物名", "國中同學綽號"), reopened.hintSnippets())
+        // 常用提示詞借用一筆隱藏 entry 存放，entries() 必須把它濾掉，
+        // 否則會在清單畫面憑空多出一筆使用者沒新增過的記錄。
+        assertEquals(1, reopened.entries().size)
+        assertEquals("github.com", reopened.entries().single().title)
+    }
+
+    @Test
+    fun settingHintSnippetsTwiceReplacesRatherThanAppends() {
+        val vault = Vault.create(fastKdf)
+        vault.setHintSnippets(listOf("第一版"))
+        vault.setHintSnippets(listOf("第二版", "第三版"))
+
+        assertEquals(listOf("第二版", "第三版"), vault.hintSnippets())
+    }
+
+    @Test
+    fun emptyVaultHasNoHintSnippets() {
+        assertTrue(Vault.create(fastKdf).hintSnippets().isEmpty())
+    }
+
+    @Test
     fun serializedFileIsKdbx4() {
         val bytes = Vault.create(fastKdf).serialize(pw())
         // KDBX 簽章 9AA2D903 B54BFB67（little-endian 寫入）

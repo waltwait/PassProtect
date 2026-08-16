@@ -8,6 +8,7 @@ import org.linguafranca.pwdb.kdbx.KdbxHeader
 import org.linguafranca.pwdb.kdbx.KdbxStreamFormat
 import org.linguafranca.pwdb.kdbx.dom.DomDatabaseWrapper
 import org.linguafranca.pwdb.kdbx.dom.DomEntryWrapper
+import org.linguafranca.pwdb.kdbx.dom.DomGroupWrapper
 import org.linguafranca.pwdb.security.Argon2
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -55,6 +56,7 @@ class Vault private constructor(
         private const val PROP_TITLE = "Title"
         private const val PROP_USERNAME = "UserName"
         private const val PROP_PASSWORD = "Password"
+        private const val PROP_SNIPPETS_MARKER = "hv.snippets-marker"
 
         /**
          * 主密碼不在此處要求——它只有在 [serialize] 寫出位元組時才用得到。
@@ -114,11 +116,32 @@ class Vault private constructor(
         }
     }
 
-    fun entries(): List<Entry> = db.findEntries { true }.map { it.toDomainEntry() }
+    /**
+     * 排除 [isHintSnippetsMarker] 那筆——它是本 app 借用一筆隱藏 entry 存放常用
+     * 提示詞清單的地方（見 [hintSnippets]），不是使用者看得到、編輯得到的記錄。
+     */
+    fun entries(): List<Entry> =
+        db.findEntries { !it.isHintSnippetsMarker() }.map { it.toDomainEntry() }
 
+    /**
+     * 一筆記錄的分類決定它掛在哪個 KDBX 群組下：[Entry.category] 空白時掛在根
+     * 群組，否則掛在同名群組（找不到就新建）。修改既有記錄的分類時，會把它從
+     * 原本的群組搬到新的群組——`DomEntryWrapper` 沒有「換父群組」的原生方法，
+     * 因此手動做「從舊群組移除、加進新群組」兩步。
+     */
     fun upsert(entry: Entry) {
         val existing = findRaw(entry.id)
-        val target = existing ?: db.newEntry().also { db.rootGroup.addEntry(it) }
+        val targetGroup = groupForCategory(entry.category)
+        val target = if (existing != null) {
+            val currentParent = existing.parent
+            if (currentParent != targetGroup) {
+                currentParent?.removeEntry(existing)
+                targetGroup.addEntry(existing)
+            }
+            existing
+        } else {
+            db.newEntry().also { targetGroup.addEntry(it) }
+        }
 
         if (existing == null) {
             // 新 entry：讓 KDBX 的 UUID 與領域模型一致，之後才找得回來
@@ -136,6 +159,57 @@ class Vault private constructor(
             .forEach { target.removeProperty(it) }
         HistoryCodec.encode(entry.history).forEach { (k, v) -> target.setProperty(k, v) }
     }
+
+    /**
+     * 目前所有記錄實際用過的分類名稱，依字母排序——給畫面做建議清單/篩選用。
+     *
+     * 刻意從 [entries] 反推，而不是直接列 `db.rootGroup.groups`：記錄搬到別的
+     * 分類後，原本的群組還在（[groupForCategory] 不會刪除變空的群組，KeePassXC
+     * 自己這麼做時也一樣），若直接列群組，使用者會在建議清單/篩選列上看到
+     * 早就沒有任何記錄的「幽靈分類」。
+     */
+    fun categories(): List<String> =
+        entries().map { it.category }.filter { it.isNotBlank() }.distinct().sorted()
+
+    private fun groupForCategory(category: String): DomGroupWrapper {
+        if (category.isBlank()) return db.rootGroup
+        db.rootGroup.groups.firstOrNull { it.name == category }?.let { return it }
+        val group = db.newGroup()
+        group.name = category
+        db.rootGroup.addGroup(group)
+        return group
+    }
+
+    /**
+     * 常用提示詞——編輯畫面存起來，之後新增/編輯其他記錄時可以直接選，
+     * 不用每次重打同一種提示句型（例如「生日+寵物名」這種固定套路）。
+     *
+     * 借用一筆隱藏的 entry 存放（見 [PROP_SNIPPETS_MARKER]），而不是另外設計
+     * 一個 KDBX 沒有原生支援的頂層結構——群組（[DomGroupWrapper]）不支援
+     * 任意自訂屬性，只有 entry 支援，這是延續 [HistoryCodec] 已經用過的
+     * 「custom string field 當儲存位置」手法。[entries] 會把這筆隱藏起來，
+     * 使用者在清單畫面看不到它；就算被 KeePassXC 這類外部工具看到，也有
+     * 清楚的標題說明用途，不會被誤刪或誤解成一筆真的密碼記錄。
+     */
+    fun hintSnippets(): List<String> {
+        val marker = findSnippetsMarkerEntry() ?: return emptyList()
+        val props = marker.propertyNames.associateWith { marker.getProperty(it) ?: "" }
+        return HintSnippetCodec.decode(props)
+    }
+
+    fun setHintSnippets(snippets: List<String>) {
+        val marker = findSnippetsMarkerEntry() ?: db.newEntry().also {
+            db.rootGroup.addEntry(it)
+            it.setProperty(PROP_SNIPPETS_MARKER, "1")
+            it.setProperty(PROP_TITLE, "PassProtect：常用提示詞（請勿刪除）")
+        }
+        marker.propertyNames.filter { HintSnippetCodec.isSnippetKey(it) }
+            .forEach { marker.removeProperty(it) }
+        HintSnippetCodec.encode(snippets).forEach { (k, v) -> marker.setProperty(k, v) }
+    }
+
+    private fun findSnippetsMarkerEntry(): DomEntryWrapper? =
+        db.findEntries { it.isHintSnippetsMarker() }.firstOrNull()
 
     fun delete(id: UUID): Boolean {
         val raw = findRaw(id) ?: return false
@@ -192,10 +266,12 @@ class Vault private constructor(
 
     private fun DomEntryWrapper.toDomainEntry(): Entry {
         val props = propertyNames.associateWith { getProperty(it) ?: "" }
+        val parentGroup = parent
         return Entry(
             id = domainId(),
             title = props[PROP_TITLE].orEmpty(),
             account = props[PROP_USERNAME].orEmpty(),
+            category = if (parentGroup == null || parentGroup.isRootGroup) "" else parentGroup.name.orEmpty(),
             hint = props[PROP_PASSWORD].orEmpty(),
             modifiedAt = lastModificationTime?.toInstant() ?: Instant.EPOCH,
             history = HistoryCodec.decode(props)
@@ -223,6 +299,10 @@ class Vault private constructor(
         getProperty(PROP_UUID_MARKER)?.let { runCatching { UUID.fromString(it) }.getOrNull() }
             ?: runCatching { uuid }.getOrNull()
             ?: UUID(0L, 0L)
+
+    /** 同 [domainId]：定義在函式庫介面上，理由相同（見該處註解）。 */
+    private fun org.linguafranca.pwdb.Entry<*, *, *, *>.isHintSnippetsMarker(): Boolean =
+        getProperty(PROP_SNIPPETS_MARKER) == "1"
 }
 
 /**
