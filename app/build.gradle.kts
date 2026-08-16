@@ -1,6 +1,17 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application") version "9.3.1"
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
+}
+
+// release 簽章的憑證/密碼放在專案根目錄的 keystore.properties（.gitignore 排除，
+// 不進版控）。本機沒有這個檔案時（例如 CI、或還沒建過 release 的環境），
+// 讓 debug build 照常能建，只有 assembleRelease 需要它才會炸。
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -12,12 +23,33 @@ android {
         minSdk = 29
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1"
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -28,11 +60,32 @@ android {
 
 dependencies {
     // 容器與加密，完全不修改。dom 模組改為 vendor 進 src/main/java，
-    // 因此這裡不能依賴 KeePassJava2-dom，否則 dex 會有重複類別。
-    implementation("org.linguafranca.pwdb:KeePassJava2-kdbx:2.2.4") {
+    // 因此這裡不能依賴 KeePassJava2-dom。
+    //
+    // 但 Maven 座標版的 KeePassJava2-kdbx-2.2.4.jar 本身其實已經內建打包了一份
+    // org.linguafranca.pwdb.kdbx.dom.* class（不是另一個獨立的 -dom 座標才有），
+    // 跟本專案 vendor 進 src/main/java 的那份是同名同套件的重複類別。debug build
+    // 的 dex 合併沒抓到（可能是增量/寬鬆），但 release build 的 mergeDexRelease
+    // 會直接失敗：「Type ... DomHelper$ValueCreator is defined multiple times」。
+    // Gradle 沒有「依賴座標 + 排除其中特定 class」這種細粒度機制，因此改用
+    // app/libs/ 下這份本機處理過的 jar：內容跟官方 2.2.4 完全一樣，只是先用
+    // `zip -d` 把 org/linguafranca/pwdb/kdbx/dom/*.class 這幾個檔案刪掉，讓
+    // vendor 進來的版本變成唯一一份。下面重新列出的幾個 transitive 依賴，是
+    // `./gradlew :app:dependencies` 對照官方座標版本印出來、原本會自動帶入的那些，
+    // 改用本機 jar 後 Gradle 不會再自動解析，必須手動補回同一份清單。
+    implementation(files("libs/KeePassJava2-kdbx-2.2.4-no-dom.jar"))
+    implementation("org.linguafranca.pwdb:database:2.2.4") {
         exclude(group = "ch.qos.logback")
         exclude(group = "junit")
     }
+    implementation("org.linguafranca.pwdb:util:2.2.4") {
+        exclude(group = "ch.qos.logback")
+        exclude(group = "junit")
+    }
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcutil-jdk18on:1.78.1")
+    implementation("commons-codec:commons-codec:1.17.0")
+    implementation("org.slf4j:slf4j-api:2.0.16")
 
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
