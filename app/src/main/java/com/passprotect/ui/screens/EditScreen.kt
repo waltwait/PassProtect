@@ -233,7 +233,12 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                 if (existingCategories.isNotEmpty()) {
                     ExposedDropdownMenu(
                         expanded = categoryMenuExpanded,
-                        onDismissRequest = { categoryMenuExpanded = false }
+                        onDismissRequest = { categoryMenuExpanded = false },
+                        // 沒有這個 modifier 時，下拉選單的寬度/可用高度不會正確對齊
+                        // 輸入框、也不會正確扣掉鍵盤佔掉的空間——鍵盤開著的時候
+                        // 選單的定位/大小就會跑掉。這是 Material3 官方文件標明
+                        // 要配 ExposedDropdownMenuBox 用的 modifier。
+                        modifier = Modifier.exposedDropdownSize()
                     ) {
                         existingCategories.forEach { name ->
                             DropdownMenuItem(
