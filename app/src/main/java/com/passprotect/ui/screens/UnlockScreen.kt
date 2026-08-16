@@ -85,9 +85,9 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
             .padding(24.dp)
     ) {
         // 把整組內容往下推，讓圖示落在螢幕下半部——比較貼近實體/螢幕下指紋
-        // 感應器實際的位置，不會叫使用者對著螢幕正中央按指紋。62/38 是抓大概，
+        // 感應器實際的位置，不會叫使用者對著螢幕正中央按指紋。78/22 是抓大概，
         // 不同機型感應器位置本來就有落差，抓一個普遍偏下的比例即可。
-        Spacer(Modifier.weight(0.62f))
+        Spacer(Modifier.weight(0.78f))
         Column(
             Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -149,6 +149,6 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
                 CircularProgressIndicator()
             }
         }
-        Spacer(Modifier.weight(0.38f))
+        Spacer(Modifier.weight(0.22f))
     }
 }
