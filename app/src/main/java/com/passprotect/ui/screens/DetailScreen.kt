@@ -174,12 +174,12 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
-                                    .padding(top = 4.dp, end = 8.dp)
-                                    .size(20.dp)
+                                    .padding(top = 2.dp, end = 8.dp)
+                                    .size(18.dp)
                             )
                             Text(
                                 account.hint,
-                                style = MaterialTheme.typography.headlineSmall,
+                                style = MaterialTheme.typography.bodyLarge,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
