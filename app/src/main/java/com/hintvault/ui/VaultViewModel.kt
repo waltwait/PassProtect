@@ -275,12 +275,14 @@ class VaultViewModel : ViewModel() {
     fun saveEntry(entry: Entry) {
         val vault = session.withVault { it }
         vault.upsert(entry)
+        _uiState.update { it.copy(saveMessage = null) }
         viewModelScope.launch { persist(vault) }
     }
 
     fun deleteEntry(id: UUID) {
         val vault = session.withVault { it }
         vault.delete(id)
+        _uiState.update { it.copy(saveMessage = null) }
         viewModelScope.launch { persist(vault) }
     }
 
@@ -356,6 +358,7 @@ class VaultViewModel : ViewModel() {
             newPassword.wipe()
             throw e
         }
+        _uiState.update { it.copy(saveMessage = null) }
         viewModelScope.launch {
             try {
                 val repo = repository ?: return@launch
