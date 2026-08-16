@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -39,7 +41,6 @@ import androidx.compose.material.icons.outlined.VpnKeyOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -164,18 +165,20 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
             if (categories.isNotEmpty()) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    FilterChip(
+                    CategoryFolderTile(
+                        label = "全部",
+                        icon = Icons.Filled.FolderOpen,
                         selected = selectedCategory == null,
-                        onClick = { selectedCategory = null },
-                        label = { Text("全部") }
+                        onClick = { selectedCategory = null }
                     )
                     categories.forEach { name ->
-                        FilterChip(
+                        CategoryFolderTile(
+                            label = name,
+                            icon = Icons.Filled.Folder,
                             selected = selectedCategory == name,
-                            onClick = { selectedCategory = if (selectedCategory == name) null else name },
-                            label = { Text(name) }
+                            onClick = { selectedCategory = if (selectedCategory == name) null else name }
                         )
                     }
                 }
@@ -231,6 +234,45 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                 }
             }
         }
+    }
+}
+
+/**
+ * 分類篩選改成資料夾造型的小方塊（圖示在上、名稱在下），取代原本純文字的
+ * FilterChip——分類本來就對應 KDBX 的群組（資料夾），用資料夾圖示比較貼近
+ * 使用者原本對「分類」的想像。互動邏輯不變：點了篩選、再點一次取消，
+ * 一次只能選一個。
+ */
+@Composable
+private fun CategoryFolderTile(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val containerColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        label = "folder-tile-container"
+    )
+    val contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(containerColor)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(26.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
     }
 }
 
