@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.VaultViewModel
+import com.passprotect.ui.categoryRoute
 import com.passprotect.ui.components.GroupPosition
 import com.passprotect.ui.components.IconTopBar
 import com.passprotect.ui.components.LargeTitleHeader
@@ -233,7 +234,7 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                     if (folders.isNotEmpty()) {
                         item(key = "folders-label") { SectionLabel("資料夾") }
                         item(key = "folders") {
-                            CategoryFolderGrid(folders, onSelect = { name -> navController.navigate("category/$name") })
+                            CategoryFolderGrid(folders, onSelect = { name -> navController.navigate(categoryRoute(name)) })
                         }
                     }
                     if (uncategorized.isNotEmpty()) {

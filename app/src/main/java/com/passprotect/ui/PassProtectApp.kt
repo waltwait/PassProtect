@@ -117,7 +117,7 @@ fun PassProtectApp(viewModel: VaultViewModel) {
                 screen("unlock") { UnlockScreen(uiState, viewModel) }
                 screen("list") { ListScreen(uiState.entries, navController, viewModel) }
                 screen("category/{categoryName}") { backStackEntry ->
-                    val name = backStackEntry.arguments?.getString("categoryName").orEmpty()
+                    val name = categoryNameFromArg(backStackEntry.arguments?.getString("categoryName"))
                     CategoryEntriesScreen(name, uiState.entries, navController, viewModel)
                 }
                 screen("detail/{entryId}") { backStackEntry ->
