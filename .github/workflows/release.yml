@@ -1,0 +1,161 @@
+# 發版：main 上的 versionName 變了（或手動觸發）→ 單元測試 → 正式簽章打包 → 核對版號、簽章憑證、
+# 不可 debug → 建 tag 與 GitHub Release。
+#
+# 跟 assethub-android 同一套做法（2026-10-23）：本機只要把 app/build.gradle.kts 的 versionName／
+# versionCode +1、推上 main，打包與發佈交給這裡。
+#
+# 需要的 secrets（由 tools/setup-release-secrets.sh 在本機設定，值不會出現在 repo 或 log）：
+#   PASSPROTECT_KEYSTORE_BASE64、PASSPROTECT_RELEASE_STORE_PASSWORD、PASSPROTECT_RELEASE_KEY_ALIAS、
+#   PASSPROTECT_RELEASE_KEY_PASSWORD
+#
+# 發佈說明：標題「PassProtect <版號>」，內文有 docs/releases/<versionName>.md 就用它（只寫條列），
+# 否則用最近一個非合併 commit 的訊息。
+name: Release APK
+
+on:
+  push:
+    branches: [main]
+    paths: [app/build.gradle.kts]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 只打包並核對簽章，不建 tag／Release（設定完 secrets 後驗證用）
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # secrets 放在這個環境、只准 main 使用（public repo 在 Free 方案也能設環境）。
+    environment: release
+    timeout-minutes: 45
+    env:
+      # 跟目前手機上裝的 release 版同一張簽章憑證（CN=PassProtect）；不相符就不發，
+      # 避免發出無法覆蓋安裝的 APK——換簽章只能解除安裝重裝，會清掉指紋設定與資料庫位置。
+      EXPECTED_CERT_SHA256: 476394618499d0f821a917ec02518c3e18331cad97585c17db01645a87031645
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 讀版號，tag 已存在就略過
+        id: ver
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          name=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          code=$(sed -n 's/^ *versionCode = \([0-9]*\)$/\1/p' app/build.gradle.kts)
+          if [ -z "$name" ] || [ -z "$code" ]; then echo "::error::讀不到 versionName／versionCode"; exit 1; fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "dry run：只打包並核對簽章，不發佈"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$name" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "v$name 已經發過，略過"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.ver.outputs.skip == 'false'
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.ver.outputs.skip == 'false'
+
+      - name: 還原簽章 keystore
+        if: steps.ver.outputs.skip == 'false'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PASSPROTECT_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then echo "::error::缺 secrets，先在本機跑 tools/setup-release-secrets.sh"; exit 1; fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "PASSPROTECT_RELEASE_STORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: 單元測試、正式打包
+        if: steps.ver.outputs.skip == 'false'
+        env:
+          PASSPROTECT_RELEASE_STORE_PASSWORD: ${{ secrets.PASSPROTECT_RELEASE_STORE_PASSWORD }}
+          PASSPROTECT_RELEASE_KEY_ALIAS: ${{ secrets.PASSPROTECT_RELEASE_KEY_ALIAS }}
+          PASSPROTECT_RELEASE_KEY_PASSWORD: ${{ secrets.PASSPROTECT_RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$PASSPROTECT_RELEASE_STORE_PASSWORD" ] || [ -z "$PASSPROTECT_RELEASE_KEY_ALIAS" ] || [ -z "$PASSPROTECT_RELEASE_KEY_PASSWORD" ]; then
+            echo "::error::缺 secrets，先在本機跑 tools/setup-release-secrets.sh"; exit 1
+          fi
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease
+
+      - name: 測試失敗時保存 JUnit 結果
+        if: failure() && steps.ver.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ github.run_id }}
+          path: app/build/test-results/testDebugUnitTest/*.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: 核對版號、簽章憑證、不可 debug
+        if: steps.ver.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          # 沒簽章時 AGP 產出的是 app-release-unsigned.apk，這個檔名根本不會存在。
+          [ -f "$apk" ] || { ls app/build/outputs/apk/release/; echo "::error::找不到已簽章的 app-release.apk"; exit 1; }
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "build-tools：$bt"
+          "$bt/aapt2" dump badging "$apk" | head -1 | tee badging.txt
+          grep -q "versionCode='${{ steps.ver.outputs.code }}' versionName='${{ steps.ver.outputs.name }}'" badging.txt
+          # 畫面含密碼提示，release 必須是不可 debug 的版本（FLAG_SECURE 也只在非 debug 時開）。
+          if "$bt/aapt2" dump xmltree --file AndroidManifest.xml "$apk" | grep -qi debuggable; then
+            echo "::error::APK 標成可 debug，不發佈"; exit 1
+          fi
+          # 輸出只有憑證名稱與指紋，沒有密碼；先存檔再解析，apksigner 失敗或沒輸出時才看得到原因
+          "$bt/apksigner" verify --print-certs "$apk" > signer.txt 2>&1 || { cat signer.txt; echo "::error::apksigner verify 失敗"; exit 1; }
+          cat signer.txt
+          # build-tools 36 以前印「Signer #1 certificate SHA-256 digest」，37 起印「V2 Signer: certificate SHA-256 digest」；
+          # 不綁前綴，取所有簽章者的指紋去重，必須剛好一個且等於預期。
+          digest=$(sed -n 's/^.*certificate SHA-256 digest: *//p' signer.txt | tr -d ' \r' | tr 'A-F' 'a-f' | sort -u)
+          if [ "$digest" != "$EXPECTED_CERT_SHA256" ]; then echo "::error::簽章憑證不符（讀到「$digest」），不發佈"; exit 1; fi
+          echo "簽章憑證相符：$digest"
+
+      - name: dry run：留下 APK 供檢查（保留 1 天）
+        if: always() && inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: 建 tag 與 GitHub Release
+        if: steps.ver.outputs.skip == 'false' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.name }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          cp app/build/outputs/apk/release/app-release.apk "PassProtect-$VERSION.apk"
+          {
+            if [ -f "docs/releases/$VERSION.md" ]; then
+              cat "docs/releases/$VERSION.md"
+            else
+              git log -1 --no-merges --format=%B
+            fi
+            echo
+            echo "同簽章，可直接覆蓋更新。（憑證 SHA-256 ${EXPECTED_CERT_SHA256:0:8}… 已在打包後核對）"
+          } > notes.md
+          gh release create "v$VERSION" "PassProtect-$VERSION.apk" --target "$sha" \
+            --title "PassProtect $VERSION" --notes-file notes.md --latest
+          sha256sum "PassProtect-$VERSION.apk"

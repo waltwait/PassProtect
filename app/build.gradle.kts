@@ -6,13 +6,26 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
 }
 
-// release 簽章的憑證/密碼放在專案根目錄的 keystore.properties（.gitignore 排除，
-// 不進版控）。本機沒有這個檔案時（例如 CI、或還沒建過 release 的環境），
-// 讓 debug build 照常能建，只有 assembleRelease 需要它才會炸。
+// release 簽章的憑證/密碼：本機放在專案根目錄的 keystore.properties（.gitignore 排除，
+// 不進版控）；CI（.github/workflows/release.yml）沒有這個檔案，改從 PASSPROTECT_RELEASE_*
+// 環境變數拿——密碼只存在 GitHub secrets 跟 runner 的環境變數裡，不必為了打包再寫一份
+// 進檔案。兩邊都沒有時（還沒建過 release 的環境）debug build 照常能建，release 會是
+// 沒簽章的 APK，不能拿去發佈。
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) load(FileInputStream(keystorePropertiesFile))
 }
+
+fun releaseSigning(key: String, env: String): String? =
+    keystoreProperties.getProperty(key) ?: providers.environmentVariable(env).orNull
+
+val releaseStoreFile = releaseSigning("storeFile", "PASSPROTECT_RELEASE_STORE_FILE")
+val releaseStorePassword = releaseSigning("storePassword", "PASSPROTECT_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = releaseSigning("keyAlias", "PASSPROTECT_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = releaseSigning("keyPassword", "PASSPROTECT_RELEASE_KEY_PASSWORD")
+val hasReleaseSigning =
+    listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).none { it.isNullOrBlank() } &&
+        rootProject.file(releaseStoreFile!!).exists()
 
 android {
     namespace = "com.passprotect"
@@ -28,12 +41,12 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (hasReleaseSigning) {
             create("release") {
-                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
-                storePassword = keystoreProperties["storePassword"] as String
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
@@ -49,7 +62,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (keystorePropertiesFile.exists()) {
+            if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
