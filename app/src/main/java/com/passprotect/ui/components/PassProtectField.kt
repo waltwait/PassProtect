@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LocalTextStyle
@@ -38,11 +37,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.passprotect.ui.theme.PassProtectTheme
 
 /**
  * 取代 Material3 預設 `OutlinedTextField` 的自訂輸入框：標題固定顯示在上方（不是
- * 飄浮進框內的 label），底色用實心的 surface 而不是描邊，聚焦時底線變金色變粗。
+ * 飄浮進框內的 label），底色用實心的 surface 而不是描邊，聚焦時底線變成主色並加粗。
  * `monospace = true` 給提示欄位用，強調「這是密碼/密語」的感覺。
  */
 @Composable
@@ -62,14 +61,14 @@ fun PassProtectField(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
-    // 強調色（聚焦底線、游標、focused label）直接取主題的 tertiary，不是另外寫死
-    // 一個金色常數——這樣主題色只有一個來源，改主題就整個 app 一起變。
-    val accent = MaterialTheme.colorScheme.tertiary
+    // 強調色（聚焦底線、游標）直接取主題的 primary，不是另外寫死一個常數——主題色
+    // 只有一個來源，改主題就整個 app 一起變。石墨主題的 tertiary 已經不當強調色用。
+    val accent = MaterialTheme.colorScheme.primary
     // 標題顏色、底線顏色、底線粗細是同一個「聚焦」狀態的三個面向，用同一個
     // transition 一起驅動——之前底線有動畫、標題卻是瞬間變色，兩者不同步。
     val focusTransition = updateTransition(focused, label = "field-focus")
     val labelColor by focusTransition.animateColor(label = "field-label-color") {
-        if (it) accent else MaterialTheme.colorScheme.onSurfaceVariant
+        if (it) MaterialTheme.colorScheme.onSurface else PassProtectTheme.extraColors.label
     }
     val underlineColor by focusTransition.animateColor(label = "field-underline-color") {
         if (it) accent else MaterialTheme.colorScheme.outlineVariant
@@ -83,18 +82,17 @@ fun PassProtectField(
             label,
             style = MaterialTheme.typography.labelMedium,
             color = labelColor,
-            letterSpacing = 0.4.sp,
             modifier = Modifier.padding(start = 2.dp, bottom = 6.dp)
         )
         Row(
             Modifier
                 .fillMaxWidth()
-                // 固定高度，不是靠 vertical padding 撐出來——不然帶 trailingIcon
+                // 最小高度，不是靠 vertical padding 撐出來——不然帶 trailingIcon
                 // 的欄位（IconButton 最小觸控尺寸 48dp）會比純文字欄位高一截，
-                // 這批欄位就會大小不一。52dp 涵蓋 48dp 的按鈕，同時比純文字內容
-                // 需要的高度寬裕，所有欄位不管有沒有 icon 都會是同一個高度。
-                .heightIn(min = 52.dp)
-                .clip(RoundedCornerShape(12.dp))
+                // 這批欄位就會大小不一。48dp 剛好涵蓋那顆按鈕，所有欄位不管有沒有
+                // icon 都會是同一個高度。
+                .heightIn(min = 48.dp)
+                .clip(MaterialTheme.shapes.extraSmall)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .drawBehind {
                     drawLine(
@@ -104,7 +102,7 @@ fun PassProtectField(
                         strokeWidth = underlineWidth.toPx()
                     )
                 }
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             leadingIcon?.let {
@@ -116,7 +114,7 @@ fun PassProtectField(
                     Text(
                         placeholder,
                         style = LocalTextStyle.current,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        color = PassProtectTheme.extraColors.label
                     )
                 }
                 // BasicTextField 的純 String 版本，只要 value 是被「外部」改掉的
