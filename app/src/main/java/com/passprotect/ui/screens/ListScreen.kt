@@ -30,6 +30,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -144,6 +148,19 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
         searchExpanded = false
         query = ""
     }
+    // 搜尋框是 LazyColumn 的第二列，清單捲下去之後點放大鏡，框會在畫面外展開——
+    // 圖示變成「關閉搜尋」卻什麼都看不到。展開時先捲回頂端，再把焦點交給搜尋框，
+    // 鍵盤直接跳出來，點了就能打字。
+    val listState = rememberLazyListState()
+    val searchFocus = remember { FocusRequester() }
+    LaunchedEffect(searchExpanded) {
+        if (searchExpanded) {
+            listState.animateScrollToItem(0)
+            // 搜尋框跟著 AnimatedVisibility 才剛組進畫面；萬一這一幀還沒掛上，
+            // requestFocus 會丟例外——寧可少一次自動聚焦，也不要整個 app 當掉。
+            runCatching { searchFocus.requestFocus() }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -165,6 +182,7 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
             Modifier
                 .padding(padding)
                 .imePadding(),
+            state = listState,
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             item(key = "header") {
@@ -176,6 +194,7 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                         query = query,
                         onQueryChange = { query = it },
                         onClose = ::closeSearch,
+                        focusRequester = searchFocus,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp)
                     )
                 }
@@ -247,7 +266,13 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
  * 文字節點，測試會對它打字然後失敗。
  */
 @Composable
-private fun SearchField(query: String, onQueryChange: (String) -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
+private fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
     val underlineColor by animateColorAsState(
@@ -262,7 +287,9 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, onClose:
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         interactionSource = interactionSource,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester),
         decorationBox = { innerTextField ->
             Row(
                 Modifier

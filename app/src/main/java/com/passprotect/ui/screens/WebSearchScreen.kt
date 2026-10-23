@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,12 +48,18 @@ fun WebSearchScreen(query: String, navController: NavController) {
     Scaffold(
         topBar = { IconTopBar(onBack = { navController.popBackStack() }, centerTitle = "搜尋網址") },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                navController.previousBackStackEntry
-                    ?.savedStateHandle
-                    ?.set(WEB_SEARCH_RESULT_KEY, currentUrl)
-                navController.popBackStack()
-            }) {
+            FloatingActionButton(
+                onClick = {
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set(WEB_SEARCH_RESULT_KEY, currentUrl)
+                    navController.popBackStack()
+                },
+                // 跟主畫面的「＋」同一套：primary 實心。不設的話 FAB 預設吃 primaryContainer。
+                shape = MaterialTheme.shapes.extraLarge,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
                 Icon(Icons.Filled.Check, contentDescription = "使用目前網址")
             }
         }

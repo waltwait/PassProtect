@@ -1,6 +1,9 @@
 package com.passprotect.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
@@ -360,22 +363,40 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                 accountFields.forEachIndexed { index, field ->
                     val number = if (accountFields.size > 1) index + 1 else null
                     key(field.id) {
-                        if (field === expanded) {
-                            ExpandedAccountCard(
-                                field = field,
-                                number = number,
-                                onRemove = if (accountFields.size > 1) {
-                                    {
-                                        val next = expandedAfterRemoval(accountFields.map { it.id }, field.id, expanded.id)
-                                        accountFields.remove(field)
-                                        expandedId = next.toString()
+                        // 展開／收合是在兩個不同的元件之間切換，animateContentSize 掛在其中一個
+                        // 身上量不到另一個的大小，只會瞬間替換。交給 AnimatedContent：SizeTransform
+                        // 從舊尺寸長到新尺寸、內容交叉淡化，下面的「新增帳號」跟著平順移動。
+                        AnimatedContent(
+                            targetState = field === expanded,
+                            transitionSpec = {
+                                fadeIn(tween(160, delayMillis = 60)) togetherWith fadeOut(tween(80)) using
+                                    SizeTransform(clip = false) { _, _ ->
+                                        spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                            visibilityThreshold = IntSize.VisibilityThreshold
+                                        )
                                     }
-                                } else null,
-                                snippets = uiState.hintSnippets,
-                                onSaveSnippet = { viewModel.addHintSnippet(field.hint) }
-                            )
-                        } else {
-                            CollapsedAccountRow(field, number, onExpand = { expandedId = field.id.toString() })
+                            },
+                            label = "account-expand"
+                        ) { isExpanded ->
+                            if (isExpanded) {
+                                ExpandedAccountCard(
+                                    field = field,
+                                    number = number,
+                                    onRemove = if (accountFields.size > 1) {
+                                        {
+                                            val next = expandedAfterRemoval(accountFields.map { it.id }, field.id, expanded.id)
+                                            accountFields.remove(field)
+                                            expandedId = next.toString()
+                                        }
+                                    } else null,
+                                    snippets = uiState.hintSnippets,
+                                    onSaveSnippet = { viewModel.addHintSnippet(field.hint) }
+                                )
+                            } else {
+                                CollapsedAccountRow(field, number, onExpand = { expandedId = field.id.toString() })
+                            }
                         }
                     }
                 }

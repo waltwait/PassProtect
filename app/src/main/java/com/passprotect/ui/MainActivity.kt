@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.view.WindowManager
 import com.passprotect.BuildConfig
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
 import androidx.fragment.app.FragmentActivity
@@ -80,6 +81,12 @@ class MainActivity : FragmentActivity() {
         }
 
         registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+
+        // 狀態列圖示（時間、電量）的深淺跟著系統的淺色／深色模式走。主題繼承的
+        // DeviceDefault 是深色主題，狀態列圖示固定是白色——淺色模式的灰白底上整條
+        // 狀態列會看不見。各畫面本來就自己處理系統列的 insets（IconTopBar 的
+        // statusBarsPadding、Scaffold 的 contentWindowInsets）。
+        enableEdgeToEdge()
 
         setContent {
             PassProtectTheme {

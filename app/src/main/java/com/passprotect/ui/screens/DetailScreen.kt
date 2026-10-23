@@ -176,24 +176,43 @@ private fun AccountCard(account: Account, number: Int?, onHistory: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         if (number != null || account.username.isNotBlank()) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            // 「帳號 N」不參與分配寬度、永遠完整顯示；帳號名稱拿剩下的空間，太長就省略。
+            // 反過來的話，一個長 email 會把「帳號 N」擠成一字一行的直條。
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 if (number != null) {
                     Text(
                         "帳號 $number",
                         style = MaterialTheme.typography.labelSmall,
-                        color = PassProtectTheme.extraColors.label,
-                        modifier = Modifier.weight(1f)
+                        color = PassProtectTheme.extraColors.label
                     )
                 }
                 if (account.username.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(
+                            6.dp,
+                            if (number != null) Alignment.End else Alignment.Start
+                        )
+                    ) {
                         Icon(
                             Icons.Outlined.Person,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
-                        Text(account.username, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            account.username,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
                     }
                 }
             }

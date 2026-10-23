@@ -50,7 +50,30 @@ internal val GraphiteDarkColors: ColorScheme = darkColorScheme(
     outlineVariant = Color(0xFF23252A),
     error = Color(0xFFE5484D),
     onError = Color(0xFFFFFFFF),
-)
+    // 以下是規格表沒列、畫面也不直接讀的角色。不設的話會退回 Material 預設的紫色，
+    // 任何吃預設配色的 Material 元件（FAB 的 primaryContainer、對話框、選單…）就會
+    // 冒出紫色。全部給中性灰，GraphiteThemeTest 會掃過每一個角色確認。
+    primaryContainer = Color(0xFF2A2B30),
+    onPrimaryContainer = Color(0xFFF2F2F0),
+    inversePrimary = Color(0xFF141518),
+    secondary = Color(0xFFC9CACE),
+    onSecondary = Color(0xFF0B0C0E),
+    secondaryContainer = Color(0xFF1C1D21),
+    onSecondaryContainer = Color(0xFFF2F2F0),
+    tertiaryContainer = Color(0xFF1C1D21),
+    onTertiaryContainer = Color(0xFFF2F2F0),
+    surfaceVariant = Color(0xFF1C1D21),
+    inverseSurface = Color(0xFFF2F2F0),
+    inverseOnSurface = Color(0xFF141518),
+    outline = Color(0xFF5F6167),
+    surfaceBright = Color(0xFF2A2B30),
+    surfaceDim = Color(0xFF0B0C0E),
+    surfaceContainerLowest = Color(0xFF070809),
+    surfaceContainerLow = Color(0xFF101114),
+    surfaceContainerHighest = Color(0xFF232428),
+    errorContainer = Color(0xFF5C1A1A),
+    onErrorContainer = Color(0xFFFFDAD5),
+).withNeutralFixedRoles()
 
 internal val GraphiteLightColors: ColorScheme = lightColorScheme(
     primary = Color(0xFF141518),
@@ -67,6 +90,45 @@ internal val GraphiteLightColors: ColorScheme = lightColorScheme(
     outlineVariant = Color(0xFFE3E3E0),
     error = Color(0xFFC62828),
     onError = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE3E3E0),
+    onPrimaryContainer = Color(0xFF141518),
+    inversePrimary = Color(0xFFF2F2F0),
+    secondary = Color(0xFF3E4046),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFEFEFED),
+    onSecondaryContainer = Color(0xFF141518),
+    tertiaryContainer = Color(0xFFEFEFED),
+    onTertiaryContainer = Color(0xFF141518),
+    surfaceVariant = Color(0xFFEFEFED),
+    inverseSurface = Color(0xFF141518),
+    inverseOnSurface = Color(0xFFF4F4F2),
+    outline = Color(0xFF8B8D93),
+    surfaceBright = Color(0xFFFFFFFF),
+    surfaceDim = Color(0xFFE3E3E0),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF9F9F8),
+    surfaceContainerHighest = Color(0xFFE8E8E6),
+    errorContainer = Color(0xFFFFDAD5),
+    onErrorContainer = Color(0xFF410001),
+).withNeutralFixedRoles()
+
+/**
+ * Material 3 的「fixed」角色（深淺模式共用同一組值）也一樣會退回預設紫色。
+ * `lightColorScheme()` / `darkColorScheme()` 不收這幾個參數，只能事後用 copy 補上。
+ */
+private fun ColorScheme.withNeutralFixedRoles(): ColorScheme = copy(
+    primaryFixed = Color(0xFFE3E3E0),
+    primaryFixedDim = Color(0xFFC9CACE),
+    onPrimaryFixed = Color(0xFF141518),
+    onPrimaryFixedVariant = Color(0xFF3E4046),
+    secondaryFixed = Color(0xFFE3E3E0),
+    secondaryFixedDim = Color(0xFFC9CACE),
+    onSecondaryFixed = Color(0xFF141518),
+    onSecondaryFixedVariant = Color(0xFF3E4046),
+    tertiaryFixed = Color(0xFFE3E3E0),
+    tertiaryFixedDim = Color(0xFFC9CACE),
+    onTertiaryFixed = Color(0xFF141518),
+    onTertiaryFixedVariant = Color(0xFF3E4046),
 )
 
 /**

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Lock
@@ -39,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -153,17 +155,21 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
             Crossfade(targetState = passwordMode, label = "unlock-mode") { showPassword ->
                 if (showPassword) {
                     if (state.lockState == LockState.Locked) {
+                        fun unlock() {
+                            viewModel.unlockWithPassword(password.toCharArray())
+                            password = ""
+                        }
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            // 鍵盤上的「完成」直接解鎖：矮一點的手機鍵盤一開，上方的鎖頭與標題
+                            // 會把「解鎖」按鈕擠到鍵盤後面，這樣不用先收鍵盤才按得到。
                             PassProtectField(
                                 value = password, onValueChange = { password = it },
                                 label = "主密碼", visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { unlock() }),
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            PrimaryWideButton("解鎖", onClick = {
-                                viewModel.unlockWithPassword(password.toCharArray())
-                                password = ""
-                            })
+                            PrimaryWideButton("解鎖", onClick = ::unlock)
                         }
                     }
                 } else {
