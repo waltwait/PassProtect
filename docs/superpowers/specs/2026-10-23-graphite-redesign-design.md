@@ -1,7 +1,7 @@
 # PassProtect 介面重新設計（A 石墨）— 設計規格
 
 日期：2026-10-23
-狀態：待審閱
+狀態：已實作（2026-10-23，分支 redesign/graphite）
 設計稿：<https://claude.ai/artifact/DNYNfsjpgUANYGDHJL75N7>（「A 石墨（已選）」頁；artboard 名稱在本文以「設計稿：xxx」標示）
 前置條件：轉場與按壓動畫的優化（共軸換頁、左滑彈簧、`animateItem`）與 release 版 R8 已在工作目錄裡，本輪建立在它們之上
 
