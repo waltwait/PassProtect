@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.SaveMessage
 import com.passprotect.ui.VaultViewModel
+import com.passprotect.ui.webSearchRoute
 import com.passprotect.ui.components.DashedAddButton
 import com.passprotect.ui.components.GroupPosition
 import com.passprotect.ui.components.GroupedRow
@@ -90,7 +91,6 @@ import com.passprotect.ui.motion.sharedBoundsOrSelf
 import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
 import com.passprotect.vault.HistoricalHint
-import java.net.URLEncoder
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -345,10 +345,7 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                     Text("網址", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(44.dp))
                     UrlInlineField(url, onValueChange = { url = it }, modifier = Modifier.weight(1f))
                     IconButton(
-                        onClick = {
-                            val query = URLEncoder.encode(title.ifBlank { "" }, "UTF-8")
-                            navController.navigate("websearch/$query")
-                        },
+                        onClick = { navController.navigate(webSearchRoute(title.ifBlank { "" })) },
                         modifier = Modifier.size(40.dp)
                     ) {
                         Icon(Icons.Rounded.Search, contentDescription = "搜尋網址", tint = MaterialTheme.colorScheme.onSurfaceVariant)

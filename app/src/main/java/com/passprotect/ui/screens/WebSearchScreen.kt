@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavController
 import com.passprotect.ui.components.IconTopBar
-import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
@@ -80,12 +79,8 @@ fun WebSearchScreen(query: String, navController: NavController) {
                             currentUrl = url
                         }
                     }
-                    val decodedQuery = try {
-                        URLDecoder.decode(query, "UTF-8")
-                    } catch (_: Exception) {
-                        query
-                    }
-                    loadUrl("https://www.google.com/search?q=" + URLEncoder.encode(decodedQuery, "UTF-8"))
+                    // query 是 Navigation 已經解碼過的原標題（見 webSearchRoute），不要再解一次。
+                    loadUrl("https://www.google.com/search?q=" + URLEncoder.encode(query, "UTF-8"))
                 }
             }
         )

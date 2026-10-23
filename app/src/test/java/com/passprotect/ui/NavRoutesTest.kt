@@ -17,11 +17,12 @@ class NavRoutesTest {
     /**
      * Navigation 比對路徑參數時會先 `Uri.decode` 一次（NavDeepLink.getMatchingPathArguments），
      * 目的地的 arguments 拿到的已經是解碼後的字串。JVM 測試裡沒有 android.net.Uri，這裡用
-     * URLDecoder 代替：路徑段裡沒有 `+` 時，兩者對 `%XX` 的解法一樣。
+     * URLDecoder 代替：兩者對 `%XX` 的解法一樣，只是 URLDecoder 會把 `+` 解成空白而
+     * Uri.decode 不會，所以先把 `+` 保護起來。
      */
-    private fun navigationDecodes(segment: String) = URLDecoder.decode(segment, "UTF-8")
+    private fun navigationDecodes(segment: String) = URLDecoder.decode(segment.replace("+", "%2B"), "UTF-8")
 
-    private fun segmentOf(route: String) = route.removePrefix("category/")
+    private fun segmentOf(route: String) = route.substringAfter('/')
 
     @Test
     fun categoryNameRoundTripsUnchanged() {
@@ -43,4 +44,14 @@ class NavRoutesTest {
 
     @Test
     fun missingArgumentReadsAsEmpty() = assertEquals("", categoryNameFromArg(null))
+
+    /** 編輯頁的「搜尋網址」把標題帶去搜尋頁，Navigation 解碼一次後就要是原本的標題。 */
+    @Test
+    fun webSearchQueryRoundTripsUnchanged() {
+        for (query in listOf("a+b", "50%", "網路 銀行", "a/b?c#d", "100%41")) {
+            val route = webSearchRoute(query)
+            assertTrue(route, route.startsWith("websearch/"))
+            assertEquals("「$query」來回一趟", query, navigationDecodes(segmentOf(route)))
+        }
+    }
 }
