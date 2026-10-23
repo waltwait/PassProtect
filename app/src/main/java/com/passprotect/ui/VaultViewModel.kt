@@ -245,12 +245,13 @@ class VaultViewModel : ViewModel() {
 
                 cacheMasterPassword(masterPassword)
                 val vault = created.outcome.vault
+                val entries = withContext(unlockDispatcher) { vault.entries() }
                 session.unlock(vault)
                 _uiState.update {
                     it.copy(
                         setup = SetupState.Ready,
                         lockState = LockState.Unlocked,
-                        entries = vault.entries(),
+                        entries = entries,
                         isCreatingVault = false,
                         setupError = if (KdfParams.exceedsBudget(created.outcome.millis)) SLOW_KDF_NOTICE else null
                     )
@@ -380,6 +381,10 @@ class VaultViewModel : ViewModel() {
         try {
             val loaded = withContext(unlockDispatcher) { repo.load() }
             val vault = withContext(unlockDispatcher) { Vault.open(loaded.bytes, masterPassword) }
+            // 把每一筆記錄從 KDBX 的 XML 解出來，要對 DOM 跑一連串 XPath 查詢，記錄一多就是
+            // 好幾百毫秒。之前放在下面 _uiState.update 裡、在主執行緒做，Argon2 跑完那一刻
+            // 轉圈會整個卡住、換到清單也頓一下。跟解密一樣在背景做完，主執行緒只負責交棒。
+            val (entries, hintSnippets) = withContext(unlockDispatcher) { vault.entries() to vault.hintSnippets() }
             loadedStamp = loaded.stamp
             cacheMasterPassword(masterPassword)
             session.unlock(vault)
@@ -387,8 +392,8 @@ class VaultViewModel : ViewModel() {
                 it.copy(
                     setup = SetupState.Ready,
                     lockState = LockState.Unlocked,
-                    entries = vault.entries(),
-                    hintSnippets = vault.hintSnippets(),
+                    entries = entries,
+                    hintSnippets = hintSnippets,
                     unlockError = null,
                     isUnlocking = false
                 )
@@ -489,11 +494,14 @@ class VaultViewModel : ViewModel() {
                 when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
                     is SaveResult.Saved -> {
                         loadedStamp = result.newStamp
-                        _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = vault.entries()) }
+                        // 同 attemptUnlock：解出所有記錄放在背景，「已儲存」的打勾動畫才不會卡一下。
+                        val entries = withContext(unlockDispatcher) { vault.entries() }
+                        _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = entries) }
                     }
                     is SaveResult.Conflict -> {
+                        val entries = withContext(unlockDispatcher) { vault.entries() }
                         _uiState.update {
-                            it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = vault.entries())
+                            it.copy(saveMessage = SaveMessage.Conflict(result.conflictFileName), entries = entries)
                         }
                     }
                 }
