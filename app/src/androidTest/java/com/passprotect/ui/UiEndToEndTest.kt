@@ -86,7 +86,7 @@ class UiEndToEndTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithContentDescription("主密碼").performTextInput("correct horse battery staple")
         composeRule.onNodeWithContentDescription("確認主密碼").performTextInput("correct horse battery staple")
-        composeRule.onNodeWithText("建立").performClick()
+        composeRule.onNodeWithText("建立資料庫").performClick()
 
         // 建立新資料庫這一步會先跑 KdfParams.calibrate()（依序試 DEFAULT(32MiB)→
         // 24MiB→FLOOR(16MiB)，直到某一級落在 3 秒預算內），三級都跑的最壞情況比
