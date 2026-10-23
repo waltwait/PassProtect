@@ -384,6 +384,9 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 96.dp)
+            // 整張資料夾磚縮成分類頁標題旁的那個方塊；圖示、名稱、筆數各自飛到新位置。
+            // 只飛圖示跟名稱的話，方塊會在圖示到位之後才淡入，筆數則原地消失，看起來散掉。
+            .sharedBoundsOrSelf(SharedKeys.folderTile(folder.name))
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
@@ -410,6 +413,7 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
             )
             Text(
                 "${folder.count} 筆",
+                modifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderCount(folder.name)),
                 style = MaterialTheme.typography.labelMedium,
                 color = PassProtectTheme.extraColors.label
             )
@@ -448,7 +452,9 @@ fun CategoryEntriesScreen(
                                 .sharedElementOrSelf(SharedKeys.folderIcon(categoryName))
                         )
                     },
-                    titleModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTitle(categoryName))
+                    titleModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTitle(categoryName)),
+                    subtitleModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderCount(categoryName)),
+                    leadingModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTile(categoryName))
                 )
             }
             item(key = "gap") { Spacer(Modifier.height(28.dp)) }
@@ -463,18 +469,6 @@ fun CategoryEntriesScreen(
                         .animateItem()
                         .padding(horizontal = 16.dp)
                 )
-            }
-            if (filtered.isNotEmpty()) {
-                // 左滑是這個 app 唯一的編輯／刪除入口（詳情頁刻意不放），但手勢本身
-                // 看不出來，這一行小字讓第一次進來的人知道有這回事。
-                item(key = "swipe-hint") {
-                    Text(
-                        "往左滑一列可以編輯或刪除",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = PassProtectTheme.extraColors.label,
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
-                    )
-                }
             }
         }
     }

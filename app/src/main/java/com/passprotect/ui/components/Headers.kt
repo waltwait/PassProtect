@@ -73,8 +73,9 @@ fun TopBarIconButton(icon: ImageVector, contentDescription: String, onClick: () 
 
 /**
  * 每頁頂部的大標題。[large] 只給主畫面（32sp），其他頁 30sp。[leading] 是標題
- * 左邊的 52dp 方塊（分類頁放資料夾圖示）。[titleModifier] 讓共享元素轉場能掛在
- * 標題文字本身上。標題最多兩行，再長就省略。
+ * 左邊的 52dp 方塊（分類頁放資料夾圖示）。[titleModifier]、[subtitleModifier]、
+ * [leadingModifier] 讓共享元素轉場能分別掛在標題、副標、左邊方塊上。標題最多兩行，
+ * 再長就省略。
  */
 @Composable
 fun LargeTitleHeader(
@@ -83,7 +84,9 @@ fun LargeTitleHeader(
     subtitle: String? = null,
     leading: (@Composable () -> Unit)? = null,
     large: Boolean = false,
-    titleModifier: Modifier = Modifier
+    titleModifier: Modifier = Modifier,
+    subtitleModifier: Modifier = Modifier,
+    leadingModifier: Modifier = Modifier
 ) {
     Row(
         modifier
@@ -95,7 +98,7 @@ fun LargeTitleHeader(
         if (leading != null) {
             val shape = RoundedCornerShape(16.dp)
             Box(
-                Modifier
+                leadingModifier
                     .size(52.dp)
                     .clip(shape)
                     .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -112,7 +115,12 @@ fun LargeTitleHeader(
                 modifier = titleModifier
             )
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = PassProtectTheme.extraColors.label)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PassProtectTheme.extraColors.label,
+                    modifier = subtitleModifier
+                )
             }
         }
     }

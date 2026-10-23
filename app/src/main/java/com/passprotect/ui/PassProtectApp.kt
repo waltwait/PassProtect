@@ -53,6 +53,28 @@ private fun navFadeIn() = fadeIn(
 
 private fun navFadeOut() = fadeOut(tween(NavFadeOutMillis, easing = FastOutLinearInEasing))
 
+private const val CategoryRoute = "category/{categoryName}"
+private const val FolderMorphDelayMillis = 180
+private const val FolderMorphFadeMillis = 320
+
+/**
+ * 主畫面 ↔ 分類頁：資料夾磚、圖示、名稱、筆數會飛到分類頁的標題區（見 ui/motion）。
+ * 這時頁面本身不能再橫向滑——元素在飛、頁面也在滑，兩種位移疊在一起會互相打架。
+ */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.isFolderMorph(): Boolean {
+    val from = initialState.destination.route
+    val to = targetState.destination.route
+    return (from == "list" && to == CategoryRoute) || (from == CategoryRoute && to == "list")
+}
+
+/**
+ * 分類頁其餘內容（記錄清單、說明文字）晚一點才淡入：先讓資料夾飛到定位，清單才
+ * 跟著出現。之前用一般換頁的節奏，清單在資料夾還在半路時就已經整個出來了。
+ */
+private fun folderMorphFadeIn() = fadeIn(
+    tween(FolderMorphFadeMillis, delayMillis = FolderMorphDelayMillis, easing = LinearOutSlowInEasing)
+)
+
 /** 每個目的地都把自己的 AnimatedContentScope 交給畫面，共享元素才知道這一頁何時進出場。 */
 private fun NavGraphBuilder.screen(route: String, content: @Composable (NavBackStackEntry) -> Unit) {
     composable(route) { backStackEntry ->
@@ -97,19 +119,22 @@ fun PassProtectApp(viewModel: VaultViewModel) {
                 navController = navController,
                 startDestination = "setup",
                 enterTransition = {
-                    if (crossesAuthGate()) navFadeIn()
-                    else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { slidePx }
+                    when {
+                        crossesAuthGate() -> navFadeIn()
+                        isFolderMorph() -> folderMorphFadeIn()
+                        else -> navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { slidePx }
+                    }
                 },
                 exitTransition = {
-                    if (crossesAuthGate()) navFadeOut()
+                    if (crossesAuthGate() || isFolderMorph()) navFadeOut()
                     else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { -slidePx }
                 },
                 popEnterTransition = {
-                    if (crossesAuthGate()) navFadeIn()
+                    if (crossesAuthGate() || isFolderMorph()) navFadeIn()
                     else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { -slidePx }
                 },
                 popExitTransition = {
-                    if (crossesAuthGate()) navFadeOut()
+                    if (crossesAuthGate() || isFolderMorph()) navFadeOut()
                     else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { slidePx }
                 }
             ) {

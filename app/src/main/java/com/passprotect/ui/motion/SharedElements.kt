@@ -29,8 +29,10 @@ val LocalSharedTransitionScope = staticCompositionLocalOf<SharedTransitionScope?
 val LocalNavAnimatedScope = staticCompositionLocalOf<AnimatedVisibilityScope?> { null }
 
 object SharedKeys {
+    fun folderTile(name: String) = "folder-tile-$name"
     fun folderIcon(name: String) = "folder-icon-$name"
     fun folderTitle(name: String) = "folder-title-$name"
+    fun folderCount(name: String) = "folder-count-$name"
     fun entryBounds(id: UUID) = "entry-bounds-$id"
     fun entryTitle(id: UUID) = "entry-title-$id"
     const val NEW_ENTRY = "new-entry"
