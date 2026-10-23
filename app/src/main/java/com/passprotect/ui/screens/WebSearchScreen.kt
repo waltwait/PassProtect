@@ -7,15 +7,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavController
+import com.passprotect.ui.components.IconTopBar
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -43,23 +39,13 @@ internal const val WEB_SEARCH_RESULT_KEY = "picked_url"
  * 這是本 app 唯一會連網的地方——密碼/提示內容完全不經過這裡，`AndroidManifest.xml`
  * 的 `INTERNET` 權限只為了這個功能存在。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebSearchScreen(query: String, navController: NavController) {
     var currentUrl by remember { mutableStateOf("") }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("搜尋網址") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        },
+        topBar = { IconTopBar(onBack = { navController.popBackStack() }, centerTitle = "搜尋網址") },
         floatingActionButton = {
             FloatingActionButton(onClick = {
                 navController.previousBackStackEntry
