@@ -82,6 +82,8 @@ import com.passprotect.ui.components.PillButton
 import com.passprotect.ui.components.SectionLabel
 import com.passprotect.ui.components.SnippetChip
 import com.passprotect.ui.theme.PassProtectTheme
+import com.passprotect.ui.motion.SharedKeys
+import com.passprotect.ui.motion.sharedBoundsOrSelf
 import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
 import com.passprotect.vault.HistoricalHint
@@ -250,6 +252,9 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     }
 
     Scaffold(
+        // 新增頁從主畫面的「＋」長出來（容器轉換）；編輯既有記錄是從左滑按鈕進來，
+        // 沒有對應的元素可以長，走一般換頁。
+        modifier = if (entryId == null) Modifier.sharedBoundsOrSelf(SharedKeys.NEW_ENTRY) else Modifier,
         topBar = {
             IconTopBar(
                 onBack = { navController.popBackStack() },

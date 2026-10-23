@@ -88,6 +88,9 @@ import com.passprotect.ui.components.shape
 import com.passprotect.ui.format.EntryRowMode
 import com.passprotect.ui.format.entryRowSubtitle
 import com.passprotect.ui.theme.PassProtectTheme
+import com.passprotect.ui.motion.SharedKeys
+import com.passprotect.ui.motion.sharedBoundsOrSelf
+import com.passprotect.ui.motion.sharedElementOrSelf
 import com.passprotect.vault.Entry
 import java.time.Instant
 import java.time.ZoneId
@@ -309,6 +312,7 @@ private fun NewEntryFab(onClick: () -> Unit) {
         contentColor = MaterialTheme.colorScheme.onPrimary,
         interactionSource = interactionSource,
         modifier = Modifier
+            .sharedBoundsOrSelf(SharedKeys.NEW_ENTRY)
             .size(60.dp)
             .pressScale(interactionSource)
     ) {
@@ -364,11 +368,14 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
             contentDescription = null,
             // 灰色，跟主題本身的灰階配色一致——不是 Finder 原本那種藍色。
             tint = PassProtectTheme.extraColors.label,
-            modifier = Modifier.size(28.dp)
+            modifier = Modifier
+                .size(28.dp)
+                .sharedElementOrSelf(SharedKeys.folderIcon(folder.name))
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 folder.name,
+                modifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTitle(folder.name)),
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -408,9 +415,12 @@ fun CategoryEntriesScreen(
                             Icons.Filled.Folder,
                             contentDescription = null,
                             tint = PassProtectTheme.extraColors.label,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier
+                                .size(28.dp)
+                                .sharedElementOrSelf(SharedKeys.folderIcon(categoryName))
                         )
-                    }
+                    },
+                    titleModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTitle(categoryName))
                 )
             }
             item(key = "gap") { Spacer(Modifier.height(28.dp)) }
@@ -468,6 +478,7 @@ private fun EntryRow(
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .sharedBoundsOrSelf(SharedKeys.entryBounds(entry.id))
                     .background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { navController.navigate("detail/${entry.id}") }
                     .heightIn(min = 60.dp)
@@ -492,6 +503,7 @@ private fun EntryRow(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         entry.title,
+                        modifier = Modifier.sharedBoundsOrSelf(SharedKeys.entryTitle(entry.id)),
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
