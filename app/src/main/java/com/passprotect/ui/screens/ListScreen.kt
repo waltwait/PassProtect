@@ -34,7 +34,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.Delete
@@ -46,7 +45,6 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,7 +53,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -389,7 +386,6 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
  * 點分類資料夾換頁進來的畫面：只顯示這個分類底下的記錄，跟主畫面共用同一套
  * 列／滑動編輯刪除元件（見 [EntryRow]）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryEntriesScreen(
     categoryName: String,
@@ -401,19 +397,23 @@ fun CategoryEntriesScreen(
         entries.filter { it.category == categoryName }.sortedBy { it.title }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(categoryName) },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+    Scaffold(topBar = { IconTopBar(onBack = { navController.popBackStack() }) }) { padding ->
+        LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item(key = "header") {
+                LargeTitleHeader(
+                    categoryName,
+                    subtitle = "${filtered.size} 筆提示",
+                    leading = {
+                        Icon(
+                            Icons.Filled.Folder,
+                            contentDescription = null,
+                            tint = PassProtectTheme.extraColors.label,
+                            modifier = Modifier.size(28.dp)
+                        )
                     }
-                }
-            )
-        }
-    ) { padding ->
-        LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(vertical = 12.dp)) {
+                )
+            }
+            item(key = "gap") { Spacer(Modifier.height(28.dp)) }
             if (filtered.isEmpty()) {
                 item(key = "empty") { EmptyEntriesMessage(hasFilter = true) }
             }
@@ -425,6 +425,18 @@ fun CategoryEntriesScreen(
                         .animateItem()
                         .padding(horizontal = 16.dp)
                 )
+            }
+            if (filtered.isNotEmpty()) {
+                // 左滑是這個 app 唯一的編輯／刪除入口（詳情頁刻意不放），但手勢本身
+                // 看不出來，這一行小字讓第一次進來的人知道有這回事。
+                item(key = "swipe-hint") {
+                    Text(
+                        "往左滑一列可以編輯或刪除",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = PassProtectTheme.extraColors.label,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
+                    )
+                }
             }
         }
     }
