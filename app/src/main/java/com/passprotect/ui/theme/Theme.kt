@@ -100,9 +100,12 @@ internal val GraphiteTypography = Typography(
     bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Normal),
     bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.Normal),
     bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Normal),
-    labelLarge = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = Tracked),
+    // labelLarge 是 Material 所有按鈕（Button、TextButton、對話框按鈕）文字的預設
+    // 樣式，所以留給按鈕用、不加字距；加了字距的區段標籤放在 labelSmall——這個
+    // app 沒有用到 Material 會讀 labelSmall 的元件（徽章之類）。
+    labelLarge = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
     labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Normal),
-    labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = Tracked),
+    labelSmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = Tracked),
 )
 
 internal val GraphiteShapes = Shapes(
