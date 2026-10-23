@@ -22,8 +22,8 @@ android {
         applicationId = "com.passprotect"
         minSdk = 29
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.0.16"
+        versionCode = 18
+        versionName = "1.0.17"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -40,7 +40,15 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8：沒開的時候 release APK 有 57 MB（material-icons-extended、Guava、
+            // BouncyCastle 整包都原封不動塞進去），Compose 的程式碼也沒經過最佳化，
+            // 動畫在 release 版一樣會頓。保留規則跟為什麼這樣寫，見 proguard-rules.pro。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
