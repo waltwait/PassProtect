@@ -2,8 +2,8 @@ package com.passprotect.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -71,13 +71,24 @@ import com.passprotect.ui.VaultViewModel
 import com.passprotect.ui.format.toDisplayString
 import com.passprotect.vault.Entry
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 private val EntryCardShape = RoundedCornerShape(14.dp)
 private val SwipeActionWidth = 64.dp
-// 先快後慢的減速曲線，沒有回彈；240ms 使用者反應還是「一閃就到底」，
-// 拉長到 450ms 讓開合的過程真的看得出來在動。
-private val SwipeSettleSpec = tween<Float>(durationMillis = 450, easing = FastOutSlowInEasing)
+// 放開後用臨界阻尼彈簧（沒有回彈）接手，不是固定時長的 tween：彈簧能接住手指
+// 放開那一刻的速度繼續滑，拖曳跟收尾之間不會有「頓一下再重新加速」的接縫。
+// 剛度抓 StiffnessLow，整體節奏跟之前調過的 450ms 差不多（240ms 使用者反應是
+// 「一閃就到底」），開合的過程一樣看得出來在動。
+private const val SwipeSettleStiffness = Spring.StiffnessLow
+private val SwipeSettleSpec = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = SwipeSettleStiffness
+)
+// 放開時順著手指速度多推算的慣性距離（秒）：快速一甩，就算位移還沒拖過門檻，
+// 也照甩的方向打開／關上。
+private const val SwipeProjectionSeconds = 0.1f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -172,7 +183,8 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                     if (searchResults.isEmpty()) {
                         EmptyEntriesMessage(hasFilter = true)
                     } else {
-                        EntryList(searchResults, navController, viewModel)
+                        // 搜尋結果每打一個字就變一次，這裡不做增刪動畫，結果要即時跟上打字。
+                        EntryList(searchResults, navController, viewModel, animateRowChanges = false)
                     }
                 }
                 entries.isEmpty() -> EmptyEntriesMessage(hasFilter = false)
@@ -199,7 +211,7 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                             }
                         }
                         items(uncategorized, key = { it.id.toString() }) { entry ->
-                            EntryCard(entry, navController, viewModel)
+                            EntryCard(entry, navController, viewModel, Modifier.animateItem())
                         }
                     }
                 }
@@ -304,20 +316,38 @@ fun CategoryEntriesScreen(
     }
 }
 
+/**
+ * [animateRowChanges]：刪除／新增一筆時，被刪的那列淡出、下面的列滑上來補位，
+ * 不是整串瞬間跳一格。
+ */
 @Composable
-private fun EntryList(entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
+private fun EntryList(
+    entries: List<Entry>,
+    navController: NavController,
+    viewModel: VaultViewModel,
+    animateRowChanges: Boolean = true
+) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(entries, key = { it.id.toString() }) { entry ->
-            EntryCard(entry, navController, viewModel)
+            EntryCard(
+                entry, navController, viewModel,
+                if (animateRowChanges) Modifier.animateItem() else Modifier
+            )
         }
     }
 }
 
 @Composable
-private fun EntryCard(entry: Entry, navController: NavController, viewModel: VaultViewModel) {
+private fun EntryCard(
+    entry: Entry,
+    navController: NavController,
+    viewModel: VaultViewModel,
+    modifier: Modifier = Modifier
+) {
     SwipeActionsRow(
         onEdit = { navController.navigate("edit/${entry.id}") },
-        onDelete = { viewModel.deleteEntry(entry.id) }
+        onDelete = { viewModel.deleteEntry(entry.id) },
+        modifier = modifier
     ) {
         Card(
             onClick = { navController.navigate("detail/${entry.id}") },
@@ -387,7 +417,12 @@ private fun EmptyEntriesMessage(hasFilter: Boolean) {
  * 不是唯一防線。
  */
 @Composable
-private fun SwipeActionsRow(onEdit: () -> Unit, onDelete: () -> Unit, content: @Composable () -> Unit) {
+private fun SwipeActionsRow(
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
     val density = LocalDensity.current
     val revealPx = with(density) { (SwipeActionWidth * 2).toPx() }
     // offsetPx 是畫面位移唯一的真值來源，任何時候都同步更新：拖曳中在
@@ -400,9 +435,17 @@ private fun SwipeActionsRow(onEdit: () -> Unit, onDelete: () -> Unit, content: @
     val settleAnim = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
 
-    suspend fun settleTo(target: Float) {
+    suspend fun settleTo(target: Float, velocity: Float = 0f) {
+        // 臨界阻尼彈簧的初速一旦超過「ω × 剩餘距離」就會衝過頭（ω = √剛度，Compose
+        // 的彈簧質量固定是 1），衝過頭會露出按鈕外側的空白。初速壓在這個上限內，
+        // 用力一甩是平順減速到定位，不是撞到邊界；coerceIn 只是保險。
+        val maxVelocity = sqrt(SwipeSettleStiffness) * abs(target - offsetPx)
         settleAnim.snapTo(offsetPx)
-        settleAnim.animateTo(target, animationSpec = SwipeSettleSpec) { offsetPx = value }
+        settleAnim.animateTo(
+            target,
+            animationSpec = SwipeSettleSpec,
+            initialVelocity = velocity.coerceIn(-maxVelocity, maxVelocity)
+        ) { offsetPx = value.coerceIn(-revealPx, 0f) }
     }
 
     fun close() {
@@ -415,7 +458,7 @@ private fun SwipeActionsRow(onEdit: () -> Unit, onDelete: () -> Unit, content: @
     // Card 的 shape = RectangleShape），全部交給這一層 clip 統一決定，才不會有
     // 卡片自己裁出的圓角在拉開後卡在中間變成浮動缺角。
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .clip(EntryCardShape)
     ) {
@@ -452,10 +495,12 @@ private fun SwipeActionsRow(onEdit: () -> Unit, onDelete: () -> Unit, content: @
                     state = rememberDraggableState { delta ->
                         offsetPx = (offsetPx + delta).coerceIn(-revealPx, 0f)
                     },
-                    onDragStopped = {
+                    onDragStopped = { velocity ->
                         // 門檻壓到 28%：滑一點點就整組打開，不用滑到快一半才有反應。
-                        val target = if (offsetPx < -revealPx * 0.28f) -revealPx else 0f
-                        settleTo(target)
+                        // 比的是「照放開時的速度再滑一小段會停在哪」，不只是放開當下的位置。
+                        val projected = offsetPx + velocity * SwipeProjectionSeconds
+                        val target = if (projected < -revealPx * 0.28f) -revealPx else 0f
+                        settleTo(target, velocity)
                     }
                 )
         ) {

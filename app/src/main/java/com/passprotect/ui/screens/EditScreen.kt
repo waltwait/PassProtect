@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -171,7 +172,9 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
         when (uiState.saveMessage) {
             is SaveMessage.Saved -> {
                 saveButtonPhase = SaveButtonPhase.Saved
-                delay(280) // 打勾動畫留一點時間被看到，才導覽離開
+                // 打勾要停留到真的被看見才導覽離開：淡入本身就要 ~220ms，之前的 280ms
+                // 只剩一閃而過，「已儲存」幾乎沒人看到。
+                delay(500)
                 navController.popBackStack()
             }
             SaveMessage.Error, is SaveMessage.Conflict -> saveButtonPhase = SaveButtonPhase.Idle
@@ -351,7 +354,13 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
             ) {
                 AnimatedContent(
                     targetState = saveButtonPhase,
-                    transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+                    // 舊內容先快速淡出、新內容稍晚才淡入並從略小放大到原尺寸——之前兩者
+                    // 同時交叉淡化，「儲存」跟「儲存中…」有一段半透明疊在一起糊成一團。
+                    transitionSpec = {
+                        (fadeIn(tween(160, delayMillis = 60)) +
+                            scaleIn(tween(160, delayMillis = 60), initialScale = 0.9f)) togetherWith
+                            fadeOut(tween(80))
+                    },
                     label = "save-button-phase"
                 ) { phase ->
                     Row(verticalAlignment = Alignment.CenterVertically) {

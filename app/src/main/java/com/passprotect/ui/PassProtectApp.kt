@@ -1,5 +1,8 @@
 package com.passprotect.ui
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,6 +13,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -24,6 +30,20 @@ import com.passprotect.ui.screens.SetupScreen
 import com.passprotect.ui.screens.UnlockScreen
 import com.passprotect.ui.screens.WebSearchScreen
 import java.util.UUID
+
+private const val NavDurationMillis = 300
+private const val NavFadeOutMillis = 90
+private val NavSlideDistance = 30.dp
+private val AuthRoutes = setOf("setup", "unlock")
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.crossesAuthGate() =
+    initialState.destination.route in AuthRoutes || targetState.destination.route in AuthRoutes
+
+private fun navFadeIn() = fadeIn(
+    tween(NavDurationMillis - NavFadeOutMillis, delayMillis = NavFadeOutMillis, easing = LinearOutSlowInEasing)
+)
+
+private fun navFadeOut() = fadeOut(tween(NavFadeOutMillis, easing = FastOutLinearInEasing))
 
 @Composable
 fun PassProtectApp(viewModel: VaultViewModel) {
@@ -47,13 +67,31 @@ fun PassProtectApp(viewModel: VaultViewModel) {
         }
     }
 
+    val slidePx = with(LocalDensity.current) { NavSlideDistance.roundToPx() }
+
+    // 換頁用 Material 的「共軸 X（shared axis）」節奏：舊畫面在前 90ms 就淡出，
+    // 新畫面接著淡入，兩者同時只平移一小段距離。之前兩邊在整段時間裡同時交叉
+    // 淡入淡出，中間有一段兩個畫面都半透明疊在一起，文字互相重影。
+    // 上鎖／解鎖（進出 setup、unlock）不是往下一層鑽，只淡入淡出、不橫向滑。
     NavHost(
         navController = navController,
         startDestination = "setup",
-        enterTransition = { slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(220)) },
-        exitTransition = { slideOutHorizontally(tween(220)) { -it / 8 } + fadeOut(tween(220)) },
-        popEnterTransition = { slideInHorizontally(tween(220)) { -it / 8 } + fadeIn(tween(220)) },
-        popExitTransition = { slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(220)) }
+        enterTransition = {
+            if (crossesAuthGate()) navFadeIn()
+            else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { slidePx }
+        },
+        exitTransition = {
+            if (crossesAuthGate()) navFadeOut()
+            else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { -slidePx }
+        },
+        popEnterTransition = {
+            if (crossesAuthGate()) navFadeIn()
+            else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { -slidePx }
+        },
+        popExitTransition = {
+            if (crossesAuthGate()) navFadeOut()
+            else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { slidePx }
+        }
     ) {
         composable("setup") { SetupScreen(uiState, viewModel) }
         composable("unlock") { UnlockScreen(uiState, viewModel) }

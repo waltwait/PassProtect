@@ -1,5 +1,6 @@
 package com.passprotect.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -159,8 +160,10 @@ fun UnlockScreen(state: VaultUiState, viewModel: VaultViewModel) {
             }
 
             // 規格 §4.1：即使是生體辨識，實際開檔仍完整跑一次 Argon2d（約 2.2 秒），
-            // 畫面必須顯示進度指示，不可看起來像卡住。
-            if (state.isUnlocking) {
+            // 畫面必須顯示進度指示，不可看起來像卡住。用展開＋淡入出現，不是憑空
+            // 插進來：整組內容的位置是上下兩個 weight Spacer 撐出來的，轉圈一插入整組
+            // 往上推，「解鎖」按鈕會在手指底下瞬間跳一截。
+            AnimatedVisibility(visible = state.isUnlocking) {
                 CircularProgressIndicator()
             }
         }

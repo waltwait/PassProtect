@@ -1,7 +1,8 @@
 package com.passprotect.ui.components
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -64,20 +65,24 @@ fun PassProtectField(
     // 強調色（聚焦底線、游標、focused label）直接取主題的 tertiary，不是另外寫死
     // 一個金色常數——這樣主題色只有一個來源，改主題就整個 app 一起變。
     val accent = MaterialTheme.colorScheme.tertiary
-    val underlineColor by animateColorAsState(
-        targetValue = if (focused) accent else MaterialTheme.colorScheme.outlineVariant,
-        label = "field-underline-color"
-    )
-    val underlineWidth by animateDpAsState(
-        targetValue = if (focused) 2.dp else 1.dp,
-        label = "field-underline-width"
-    )
+    // 標題顏色、底線顏色、底線粗細是同一個「聚焦」狀態的三個面向，用同一個
+    // transition 一起驅動——之前底線有動畫、標題卻是瞬間變色，兩者不同步。
+    val focusTransition = updateTransition(focused, label = "field-focus")
+    val labelColor by focusTransition.animateColor(label = "field-label-color") {
+        if (it) accent else MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val underlineColor by focusTransition.animateColor(label = "field-underline-color") {
+        if (it) accent else MaterialTheme.colorScheme.outlineVariant
+    }
+    val underlineWidth by focusTransition.animateDp(label = "field-underline-width") {
+        if (it) 2.dp else 1.dp
+    }
 
     Column(modifier) {
         Text(
             label,
             style = MaterialTheme.typography.labelMedium,
-            color = if (focused) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = labelColor,
             letterSpacing = 0.4.sp,
             modifier = Modifier.padding(start = 2.dp, bottom = 6.dp)
         )
