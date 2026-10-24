@@ -76,7 +76,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,11 +95,6 @@ import com.passprotect.ui.components.shape
 import com.passprotect.ui.format.EntryRowMode
 import com.passprotect.ui.format.entryRowSubtitle
 import com.passprotect.ui.theme.PassProtectTheme
-import com.passprotect.ui.motion.SharedKeys
-import com.passprotect.ui.motion.sharedBoxOrSelf
-import com.passprotect.ui.motion.sharedElementOrSelf
-import com.passprotect.ui.motion.sharedPageSourceOrSelf
-import com.passprotect.ui.motion.sharedTextOrSelf
 import com.passprotect.vault.Entry
 import java.time.Instant
 import java.time.ZoneId
@@ -124,9 +118,8 @@ private val SwipeSettleSpec = spring<Float>(
 private const val SwipeProjectionSeconds = 0.1f
 
 /**
- * 動作鈕只在這一列真的被拉開（畫面上至少位移 1px）時才畫。點一列長成詳情頁時，
- * 列本身被搬到共享元素的 overlay 去畫，原本的位置是空的；按鈕若一直墊在底下，
- * 轉場那一瞬間就會從空位露出來。
+ * 動作鈕只在這一列真的被拉開（畫面上至少位移 1px）時才畫。收著的時候按鈕整個被列
+ * 蓋住，本來就看不到；不畫就不會有任何情況讓它從列底下透出來。
  */
 internal fun swipeActionsShown(offsetPx: Float): Boolean = offsetPx.roundToInt() < 0
 
@@ -365,7 +358,6 @@ private fun NewEntryFab(onClick: () -> Unit) {
         contentColor = MaterialTheme.colorScheme.onPrimary,
         interactionSource = interactionSource,
         modifier = Modifier
-            .sharedPageSourceOrSelf(SharedKeys.NEW_ENTRY, ContentScale.None, Alignment.BottomEnd)
             .size(60.dp)
             .pressScale(interactionSource)
     ) {
@@ -409,9 +401,6 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 96.dp)
-            // 整張資料夾磚縮成分類頁標題旁的那個方塊；圖示、名稱、筆數各自飛到新位置。
-            // 只飛圖示跟名稱的話，方塊會在圖示到位之後才淡入，筆數則原地消失，看起來散掉。
-            .sharedBoxOrSelf(SharedKeys.folderTile(folder.name))
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
@@ -424,21 +413,17 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
             contentDescription = null,
             // 灰色，跟主題本身的灰階配色一致——不是 Finder 原本那種藍色。
             tint = PassProtectTheme.extraColors.label,
-            modifier = Modifier
-                .size(28.dp)
-                .sharedElementOrSelf(SharedKeys.folderIcon(folder.name))
+            modifier = Modifier.size(28.dp)
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 folder.name,
-                modifier = Modifier.sharedTextOrSelf(SharedKeys.folderTitle(folder.name)),
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 "${folder.count} 筆",
-                modifier = Modifier.sharedTextOrSelf(SharedKeys.folderCount(folder.name)),
                 style = MaterialTheme.typography.labelMedium,
                 color = PassProtectTheme.extraColors.label
             )
@@ -472,14 +457,9 @@ fun CategoryEntriesScreen(
                             Icons.Filled.Folder,
                             contentDescription = null,
                             tint = PassProtectTheme.extraColors.label,
-                            modifier = Modifier
-                                .size(28.dp)
-                                .sharedElementOrSelf(SharedKeys.folderIcon(categoryName))
+                            modifier = Modifier.size(28.dp)
                         )
-                    },
-                    titleModifier = Modifier.sharedTextOrSelf(SharedKeys.folderTitle(categoryName)),
-                    subtitleModifier = Modifier.sharedTextOrSelf(SharedKeys.folderCount(categoryName)),
-                    leadingModifier = Modifier.sharedBoxOrSelf(SharedKeys.folderTile(categoryName))
+                    }
                 )
             }
             item(key = "gap") { Spacer(Modifier.height(28.dp)) }
@@ -525,12 +505,6 @@ private fun EntryRow(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .sharedPageSourceOrSelf(
-                        SharedKeys.entryBounds(entry.id),
-                        ContentScale.FillWidth,
-                        Alignment.TopCenter,
-                        clip = position.shape()
-                    )
                     .background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { navController.navigate("detail/${entry.id}") }
                     .heightIn(min = 60.dp)
@@ -555,7 +529,6 @@ private fun EntryRow(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         entry.title,
-                        modifier = Modifier.sharedTextOrSelf(SharedKeys.entryTitle(entry.id), ContentScale.FillWidth),
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
@@ -648,12 +621,10 @@ private fun SwipeActionsRow(
     // 一個整體」。形狀由這一列在群組清單裡的位置決定（[GroupPosition]）：頭尾兩列
     // 只有外側兩角是圓的，中間的列是直角——拉開時露出的按鈕跟著同一個形狀裁，
     // 群組最上、最下那兩顆按鈕的外角才會跟容器的圓角接得上。
-    // 底色跟列本身一樣：列被搬去轉場 overlay 時，空出來的位置看起來還是群組裡的一列。
     Box(
         modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Row(
             Modifier

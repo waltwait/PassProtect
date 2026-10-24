@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -30,7 +29,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,10 +41,6 @@ import com.passprotect.ui.components.TonalButton
 import com.passprotect.ui.format.historyCountLabel
 import com.passprotect.ui.format.longDate
 import com.passprotect.ui.theme.PassProtectTheme
-import com.passprotect.ui.motion.SharedKeys
-import com.passprotect.ui.motion.sharedPageContentOrSelf
-import com.passprotect.ui.motion.sharedPageOrSelf
-import com.passprotect.ui.motion.sharedTextOrSelf
 import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
 import java.time.ZoneId
@@ -61,11 +55,7 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
     val entry = entries.firstOrNull { it.id == entryId }
     val context = LocalContext.current
 
-    // 整頁從清單上被點的那一列長出來（容器轉換），標題文字從列上的標題放大到這裡。
-    Scaffold(
-        topBar = { Box(Modifier.sharedPageContentOrSelf()) { IconTopBar(onBack = { navController.popBackStack() }) } },
-        modifier = Modifier.sharedPageOrSelf(SharedKeys.entryBounds(entryId))
-    ) { padding ->
+    Scaffold(topBar = { IconTopBar(onBack = { navController.popBackStack() }) }) { padding ->
         // 記錄可能在這個畫面開著時被刪掉（左滑刪除後立刻點進來、或同步檔被另一台
         // 裝置改掉）。仍然留著頂列的返回鍵，使用者才有路回去。
         if (entry == null) {
@@ -79,11 +69,10 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
         Column(
             Modifier
                 .padding(padding)
-                .sharedPageContentOrSelf()
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp)
         ) {
-            LargeTitleHeader(entry.title, titleModifier = Modifier.sharedTextOrSelf(SharedKeys.entryTitle(entry.id), ContentScale.FillWidth))
+            LargeTitleHeader(entry.title)
 
             // 分類／網址是這筆記錄的中繼資料，用小膠囊跟下面真正的內容（帳號卡片）
             // 分開，掃過去就知道「這兩個只是標籤，不是密語本身」。

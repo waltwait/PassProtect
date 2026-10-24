@@ -1,14 +1,6 @@
-@file:OptIn(ExperimentalSharedTransitionApi::class)
-
 package com.passprotect.ui
 
 import androidx.compose.animation.AnimatedContentTransitionScope
-import com.passprotect.ui.motion.LocalSharedTransitionScope
-import com.passprotect.ui.motion.LocalNavAnimatedScope
-import androidx.navigation.NavGraphBuilder
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.animation.SharedTransitionLayout
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -53,35 +45,6 @@ private fun navFadeIn() = fadeIn(
 
 private fun navFadeOut() = fadeOut(tween(NavFadeOutMillis, easing = FastOutLinearInEasing))
 
-private const val CategoryRoute = "category/{categoryName}"
-private const val FolderMorphDelayMillis = 180
-private const val FolderMorphFadeMillis = 320
-
-/**
- * 主畫面 ↔ 分類頁：資料夾磚、圖示、名稱、筆數會飛到分類頁的標題區（見 ui/motion）。
- * 這時頁面本身不能再橫向滑——元素在飛、頁面也在滑，兩種位移疊在一起會互相打架。
- */
-private fun AnimatedContentTransitionScope<NavBackStackEntry>.isFolderMorph(): Boolean {
-    val from = initialState.destination.route
-    val to = targetState.destination.route
-    return (from == "list" && to == CategoryRoute) || (from == CategoryRoute && to == "list")
-}
-
-/**
- * 分類頁其餘內容（記錄清單、說明文字）晚一點才淡入：先讓資料夾飛到定位，清單才
- * 跟著出現。之前用一般換頁的節奏，清單在資料夾還在半路時就已經整個出來了。
- */
-private fun folderMorphFadeIn() = fadeIn(
-    tween(FolderMorphFadeMillis, delayMillis = FolderMorphDelayMillis, easing = LinearOutSlowInEasing)
-)
-
-/** 每個目的地都把自己的 AnimatedContentScope 交給畫面，共享元素才知道這一頁何時進出場。 */
-private fun NavGraphBuilder.screen(route: String, content: @Composable (NavBackStackEntry) -> Unit) {
-    composable(route) { backStackEntry ->
-        CompositionLocalProvider(LocalNavAnimatedScope provides this) { content(backStackEntry) }
-    }
-}
-
 @Composable
 fun PassProtectApp(viewModel: VaultViewModel) {
     val navController = rememberNavController()
@@ -110,61 +73,52 @@ fun PassProtectApp(viewModel: VaultViewModel) {
     // 新畫面接著淡入，兩者同時只平移一小段距離。之前兩邊在整段時間裡同時交叉
     // 淡入淡出，中間有一段兩個畫面都半透明疊在一起，文字互相重影。
     // 上鎖／解鎖（進出 setup、unlock）不是往下一層鑽，只淡入淡出、不橫向滑。
-    // SharedTransitionLayout 包住整個 NavHost，「點的東西長成下一頁」的共享元素
-    // 轉場才接得起來（見 ui/motion/SharedElements.kt）。沒有共享元素的換頁照舊走
-    // 下面的共軸節奏。
-    SharedTransitionLayout {
-        CompositionLocalProvider(LocalSharedTransitionScope provides this) {
-            NavHost(
-                navController = navController,
-                startDestination = "setup",
-                enterTransition = {
-                    when {
-                        crossesAuthGate() -> navFadeIn()
-                        isFolderMorph() -> folderMorphFadeIn()
-                        else -> navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { slidePx }
-                    }
-                },
-                exitTransition = {
-                    if (crossesAuthGate() || isFolderMorph()) navFadeOut()
-                    else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { -slidePx }
-                },
-                popEnterTransition = {
-                    if (crossesAuthGate() || isFolderMorph()) navFadeIn()
-                    else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { -slidePx }
-                },
-                popExitTransition = {
-                    if (crossesAuthGate() || isFolderMorph()) navFadeOut()
-                    else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { slidePx }
-                }
-            ) {
-                screen("setup") { SetupScreen(uiState, viewModel) }
-                screen("unlock") { UnlockScreen(uiState, viewModel) }
-                screen("list") { ListScreen(uiState.entries, navController, viewModel) }
-                screen("category/{categoryName}") { backStackEntry ->
-                    val name = categoryNameFromArg(backStackEntry.arguments?.getString("categoryName"))
-                    CategoryEntriesScreen(name, uiState.entries, navController, viewModel)
-                }
-                screen("detail/{entryId}") { backStackEntry ->
-                    val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
-                    DetailScreen(id, uiState.entries, navController)
-                }
-                screen("edit_new") { EditScreen(null, uiState.entries, navController, viewModel) }
-                screen("edit/{entryId}") { backStackEntry ->
-                    val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
-                    EditScreen(id, uiState.entries, navController, viewModel)
-                }
-                screen("history/{entryId}/{accountId}") { backStackEntry ->
-                    val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
-                    val accountId = UUID.fromString(backStackEntry.arguments?.getString("accountId"))
-                    HistoryScreen(id, accountId, uiState.entries, navController)
-                }
-                screen("settings") { SettingsScreen(uiState, navController, viewModel) }
-                screen("websearch/{query}") { backStackEntry ->
-                    val query = backStackEntry.arguments?.getString("query").orEmpty()
-                    WebSearchScreen(query, navController)
-                }
-            }
+    // 其他換頁一律只有這個頁面動畫，不讓頁面上的元件各自飛到下一頁。
+    NavHost(
+        navController = navController,
+        startDestination = "setup",
+        enterTransition = {
+            if (crossesAuthGate()) navFadeIn()
+            else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { slidePx }
+        },
+        exitTransition = {
+            if (crossesAuthGate()) navFadeOut()
+            else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { -slidePx }
+        },
+        popEnterTransition = {
+            if (crossesAuthGate()) navFadeIn()
+            else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { -slidePx }
+        },
+        popExitTransition = {
+            if (crossesAuthGate()) navFadeOut()
+            else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { slidePx }
+        }
+    ) {
+        composable("setup") { SetupScreen(uiState, viewModel) }
+        composable("unlock") { UnlockScreen(uiState, viewModel) }
+        composable("list") { ListScreen(uiState.entries, navController, viewModel) }
+        composable("category/{categoryName}") { backStackEntry ->
+            val name = categoryNameFromArg(backStackEntry.arguments?.getString("categoryName"))
+            CategoryEntriesScreen(name, uiState.entries, navController, viewModel)
+        }
+        composable("detail/{entryId}") { backStackEntry ->
+            val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
+            DetailScreen(id, uiState.entries, navController)
+        }
+        composable("edit_new") { EditScreen(null, uiState.entries, navController, viewModel) }
+        composable("edit/{entryId}") { backStackEntry ->
+            val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
+            EditScreen(id, uiState.entries, navController, viewModel)
+        }
+        composable("history/{entryId}/{accountId}") { backStackEntry ->
+            val id = UUID.fromString(backStackEntry.arguments?.getString("entryId"))
+            val accountId = UUID.fromString(backStackEntry.arguments?.getString("accountId"))
+            HistoryScreen(id, accountId, uiState.entries, navController)
+        }
+        composable("settings") { SettingsScreen(uiState, navController, viewModel) }
+        composable("websearch/{query}") { backStackEntry ->
+            val query = backStackEntry.arguments?.getString("query").orEmpty()
+            WebSearchScreen(query, navController)
         }
     }
 

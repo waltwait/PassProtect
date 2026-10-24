@@ -7,8 +7,7 @@ import org.junit.Test
 
 /**
  * 分類名稱是使用者自己打的字，放進 "category/{categoryName}" 之前要編碼；分類頁讀回來的
- * 名字要跟資料夾上的一字不差，篩選和共享元素的 key（SharedKeys.folderIcon/folderTitle）
- * 才對得上。
+ * 名字要跟資料夾上的一字不差，篩選才對得上。
  */
 class NavRoutesTest {
 
