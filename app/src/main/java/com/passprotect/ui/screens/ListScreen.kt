@@ -73,6 +73,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -117,6 +118,13 @@ private val SwipeSettleSpec = spring<Float>(
 // 放開時順著手指速度多推算的慣性距離（秒）：快速一甩，就算位移還沒拖過門檻，
 // 也照甩的方向打開／關上。
 private const val SwipeProjectionSeconds = 0.1f
+
+/**
+ * 動作鈕只在這一列真的被拉開（畫面上至少位移 1px）時才畫。點一列長成詳情頁時，
+ * 列本身被搬到共享元素的 overlay 去畫，原本的位置是空的；按鈕若一直墊在底下，
+ * 轉場那一瞬間就會從空位露出來。
+ */
+internal fun swipeActionsShown(offsetPx: Float): Boolean = offsetPx.roundToInt() < 0
 
 /** 主畫面資料夾格的一格：分類名稱與底下幾筆記錄。 */
 internal data class FolderSummary(val name: String, val count: Int)
@@ -618,13 +626,18 @@ private fun SwipeActionsRow(
     // 一個整體」。形狀由這一列在群組清單裡的位置決定（[GroupPosition]）：頭尾兩列
     // 只有外側兩角是圓的，中間的列是直角——拉開時露出的按鈕跟著同一個形狀裁，
     // 群組最上、最下那兩顆按鈕的外角才會跟容器的圓角接得上。
+    // 底色跟列本身一樣：列被搬去轉場 overlay 時，空出來的位置看起來還是群組裡的一列。
     Box(
         modifier
             .fillMaxWidth()
             .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Row(
-            Modifier.matchParentSize(),
+            Modifier
+                .matchParentSize()
+                // 在繪製階段讀 offsetPx，拖曳時不會每一格都重組。
+                .graphicsLayer { alpha = if (swipeActionsShown(offsetPx)) 1f else 0f },
             horizontalArrangement = Arrangement.End
         ) {
             SwipeActionButton(
