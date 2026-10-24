@@ -1,8 +1,10 @@
 package com.passprotect.ui.format
 
+import com.passprotect.storage.BackupEntry
 import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
 import org.junit.Assert.assertEquals
@@ -67,4 +69,19 @@ class EntryFormatTest {
     @Test
     fun replacedLabelReadsAsSentence() =
         assertEquals("2026 年 8 月 3 日換掉", replacedLabel(Instant.parse("2026-08-03T02:00:00Z"), zone))
+
+    // 設定頁「立即備份」右側、還原清單的日期（規格 2026-10-24-local-backup §2）。
+    private val backupNow = Instant.parse("2026-10-24T06:00:00Z")
+
+    @Test
+    fun lastBackupTodayShowsTheTime() =
+        assertEquals("今天 14:32", lastBackupLabel(Instant.parse("2026-10-24T06:32:00Z"), backupNow, zone))
+
+    @Test
+    fun lastBackupEarlierShowsTheDate() =
+        assertEquals("10 月 22 日", lastBackupLabel(Instant.parse("2026-10-22T01:00:00Z"), backupNow, zone))
+
+    @Test
+    fun backupDateLabelIncludesTheWeekday() =
+        assertEquals("10 月 22 日 週四", backupDateLabel(BackupEntry("x", LocalDate.of(2026, 10, 22), null, false, 0), today = LocalDate.of(2026, 10, 24)))
 }

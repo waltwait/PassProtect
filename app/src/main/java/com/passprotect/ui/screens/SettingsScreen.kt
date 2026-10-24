@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavController
@@ -55,8 +57,11 @@ import com.passprotect.ui.components.RemovableChip
 import com.passprotect.ui.components.SectionLabel
 import com.passprotect.ui.components.SegmentedControl
 import com.passprotect.ui.components.SwitchRow
+import com.passprotect.ui.format.lastBackupLabel
 import com.passprotect.ui.theme.PassProtectTheme
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * 區段順序是「安全 → 常用提示詞 → 資料庫」：最常回來調的（自動上鎖、指紋）放最上面，
@@ -69,6 +74,12 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.onFolderChosen(context, uri)
     }
+    val pickBackupFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) viewModel.chooseBackupFolder(context, uri)
+    }
+    var showingRestore by rememberSaveable { mutableStateOf(false) }
+    // 每次進設定頁都重讀備份資料夾：最後一次備份時間、還原清單要是現在的樣子。
+    LaunchedEffect(Unit) { viewModel.refreshBackups() }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var newSnippet by remember { mutableStateOf("") }
@@ -255,6 +266,62 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                     tint = PassProtectTheme.extraColors.label.copy(alpha = 0.6f)
                 )
             }
+
+            // 本地備份（規格 2026-10-24-local-backup §2）：每天一份到自己選的資料夾，可以挑一份還原。
+            SectionLabel("備份")
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                GroupedRow(GroupPosition.First, onClick = { pickBackupFolder.launch(null) }) {
+                    Text("備份資料夾", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        uiState.backupFolderName ?: "未設定",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                GroupedRow(
+                    GroupPosition.Middle,
+                    onClick = {
+                        if (uiState.backupFolderName == null) pickBackupFolder.launch(null) else viewModel.backupNow()
+                    }
+                ) {
+                    Text("立即備份", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    val lastBackup = uiState.backups.maxOfOrNull { it.lastModified }
+                    when {
+                        uiState.backupFailed -> Text(
+                            "備份失敗",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        lastBackup != null -> Text(
+                            lastBackupLabel(Instant.ofEpochMilli(lastBackup), Instant.now(), ZoneId.systemDefault()),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = PassProtectTheme.extraColors.label
+                        )
+                    }
+                }
+                GroupedRow(GroupPosition.Last, onClick = { showingRestore = true }) {
+                    Text("從備份還原", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = PassProtectTheme.extraColors.label.copy(alpha = 0.6f)
+                    )
+                }
+            }
         }
+    }
+
+    if (showingRestore) {
+        RestoreBackupSheet(
+            backups = uiState.backups,
+            restoreState = uiState.restoreState,
+            onRestore = { name, password -> viewModel.restoreBackup(name, password, currentBiometric()) },
+            onDismiss = {
+                showingRestore = false
+                viewModel.clearRestoreState()
+            }
+        )
     }
 }
