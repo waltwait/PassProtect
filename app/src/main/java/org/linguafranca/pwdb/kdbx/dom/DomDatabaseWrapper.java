@@ -85,6 +85,25 @@ public class DomDatabaseWrapper extends AbstractDatabase<DomDatabaseWrapper, Dom
                 checkNotNull(inputStream, "InputStream must not be null"));
     }
 
+    /**
+     * PassProtect 加的：用呼叫端給的 [streamFormat] 開檔（例如帶著會記住 KDF 結果的檔頭，
+     * 見 com.passprotect.vault.CachingKdbxHeader），其餘跟 [load] 一樣。
+     */
+    public static DomDatabaseWrapper load(@NotNull StreamFormat<?> streamFormat,
+                                          @NotNull Credentials credentials,
+                                          @NotNull InputStream inputStream) throws IOException {
+        return new DomDatabaseWrapper(
+                checkNotNull(streamFormat, "StreamFormat must not be null"),
+                checkNotNull(credentials, "Credentials must not be null"),
+                checkNotNull(inputStream, "InputStream must not be null"));
+    }
+
+    private DomDatabaseWrapper(StreamFormat<?> streamFormat, Credentials credentials, InputStream inputStream) throws IOException {
+        this.streamFormat = streamFormat;
+        streamFormat.load(domDatabase, credentials, inputStream);
+        init();
+    }
+
     private void init() {
         document = domDatabase.getDoc();
         try {

@@ -4,7 +4,6 @@ import com.passprotect.crypto.KdfParams
 import com.passprotect.crypto.toUtf8Bytes
 import com.passprotect.crypto.useThenWipe
 import org.linguafranca.pwdb.kdbx.KdbxCreds
-import org.linguafranca.pwdb.kdbx.KdbxHeader
 import org.linguafranca.pwdb.kdbx.KdbxStreamFormat
 import org.linguafranca.pwdb.kdbx.dom.DomDatabaseWrapper
 import org.linguafranca.pwdb.kdbx.dom.DomEntryWrapper
@@ -76,14 +75,18 @@ class Vault private constructor(
          */
         fun open(bytes: ByteArray, masterPassword: CharArray): Vault {
             val creds = masterPassword.toUtf8Bytes().useThenWipe { KdbxCreds(it) }
+            // 版本 3 跟 KdbxStreamFormat() 預設的一樣；實際版本開檔時從檔頭讀出來。
+            val header = CachingKdbxHeader(3)
             val db = try {
-                DomDatabaseWrapper.load(creds, ByteArrayInputStream(bytes))
+                DomDatabaseWrapper.load(KdbxStreamFormat(header), creds, ByteArrayInputStream(bytes))
             } catch (e: Exception) {
                 if (e.isUnknownKdfOrCipherUuid()) throw UnsupportedVaultFormatException(e)
                 // 函式庫對錯誤密碼擲出 IllegalStateException，對損毀檔案擲出各種例外。
                 // 一律轉成同一個型別；cause 保留在裡面供除錯用，只是不讓呼叫端
                 // 依錯誤「種類」做判斷分支。
                 throw WrongPasswordException(e)
+            } finally {
+                header.wipe()
             }
             return Vault(db, db.kdfParamsOrDefault())
         }
@@ -241,15 +244,19 @@ class Vault private constructor(
      * 的這個陣列。呼叫端用完後必須自己呼叫 `masterPassword.wipe()`。
      */
     fun serialize(masterPassword: CharArray): ByteArray {
-        val header = KdbxHeader(4).apply {
+        val header = CachingKdbxHeader(4).apply {
             keyDerivationFunction = Argon2.getInstance()
             kdfParameters.putULong("M", kdf.memoryBytes)
             kdfParameters.putULong("I", kdf.iterations)
             kdfParameters.putUInt("P", kdf.parallelism)
         }
         val out = ByteArrayOutputStream()
-        masterPassword.toUtf8Bytes().useThenWipe { pwBytes ->
-            db.save(KdbxStreamFormat(header), KdbxCreds(pwBytes), out)
+        try {
+            masterPassword.toUtf8Bytes().useThenWipe { pwBytes ->
+                db.save(KdbxStreamFormat(header), KdbxCreds(pwBytes), out)
+            }
+        } finally {
+            header.wipe()
         }
         return out.toByteArray()
     }

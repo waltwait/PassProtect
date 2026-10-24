@@ -6,9 +6,9 @@ package com.passprotect.crypto
  * 注意這裡是 Argon2**d** 而非 Argon2id——KeePassJava2 的 Argon2 實作寫死
  * Argon2Parameters.ARGON2_d，且註冊於 Argon2d 的 UUID。
  *
- * 實測（Galaxy S25 / Android 16）：32 MiB / I=2 端到端約 2.2 秒。
- * 端到端之所以是原始 KDF 時間的兩倍，是因為 KdbxHeader.getTransformedKeyDigest()
- * 沒有快取，存取路徑各會呼叫它 2-3 次。
+ * 實測（Galaxy S25 / Android 16）：32 MiB / I=2 端到端約 2.2 秒——那是 KDF 跑三次的時間：
+ * KeePassJava2 開檔／存檔會呼叫 KdbxHeader.getTransformedKeyDigest() 三次，而它沒有快取。
+ * 現在由 com.passprotect.vault.CachingKdbxHeader 記住第一次的結果，每次開檔／存檔只跑一次。
  */
 data class KdfParams(
     val memoryMib: Long,
