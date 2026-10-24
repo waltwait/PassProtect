@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +76,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,8 +97,10 @@ import com.passprotect.ui.format.EntryRowMode
 import com.passprotect.ui.format.entryRowSubtitle
 import com.passprotect.ui.theme.PassProtectTheme
 import com.passprotect.ui.motion.SharedKeys
-import com.passprotect.ui.motion.sharedBoundsOrSelf
+import com.passprotect.ui.motion.sharedBoxOrSelf
 import com.passprotect.ui.motion.sharedElementOrSelf
+import com.passprotect.ui.motion.sharedPageSourceOrSelf
+import com.passprotect.ui.motion.sharedTextOrSelf
 import com.passprotect.vault.Entry
 import java.time.Instant
 import java.time.ZoneId
@@ -140,8 +144,13 @@ internal fun folderSummaries(entries: List<Entry>): List<FolderSummary> =
 @Composable
 fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
     val uiState by viewModel.uiState.collectAsState()
-    var query by remember { mutableStateOf("") }
-    var searchExpanded by remember { mutableStateOf(false) }
+    // 搜尋字跟展開狀態要撐過換頁：點進一筆搜尋結果、再返回時，這個畫面早已被拆掉重組，
+    // 用 remember 的話一回來就變回資料夾畫面——剛剛的結果不見了，詳情頁也找不到那一列
+    // 可以縮回去，只能整頁淡掉，看起來像閃一下就沒了。
+    var query by rememberSaveable { mutableStateOf("") }
+    var searchExpanded by rememberSaveable { mutableStateOf(false) }
+    // 只有剛按下放大鏡時才捲回頂端、叫出鍵盤；從詳情頁返回、還原成展開狀態時不要。
+    var focusSearchOnOpen by remember { mutableStateOf(false) }
     val folders = remember(entries) { folderSummaries(entries) }
     val uncategorized = remember(entries) {
         entries.filter { it.category.isBlank() }.sortedBy { it.title }
@@ -163,7 +172,8 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
     val listState = rememberLazyListState()
     val searchFocus = remember { FocusRequester() }
     LaunchedEffect(searchExpanded) {
-        if (searchExpanded) {
+        if (searchExpanded && focusSearchOnOpen) {
+            focusSearchOnOpen = false
             listState.animateScrollToItem(0)
             // 搜尋框跟著 AnimatedVisibility 才剛組進畫面；萬一這一幀還沒掛上，
             // requestFocus 會丟例外——寧可少一次自動聚焦，也不要整個 app 當掉。
@@ -177,7 +187,14 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
                 TopBarIconButton(
                     Icons.Rounded.Search,
                     contentDescription = if (searchExpanded) "關閉搜尋" else "搜尋",
-                    onClick = { if (searchExpanded) closeSearch() else searchExpanded = true }
+                    onClick = {
+                        if (searchExpanded) {
+                            closeSearch()
+                        } else {
+                            searchExpanded = true
+                            focusSearchOnOpen = true
+                        }
+                    }
                 )
                 TopBarIconButton(Icons.Outlined.Lock, contentDescription = "鎖定", onClick = { viewModel.lock() })
                 TopBarIconButton(Icons.Outlined.Settings, contentDescription = "設定", onClick = { navController.navigate("settings") })
@@ -348,7 +365,7 @@ private fun NewEntryFab(onClick: () -> Unit) {
         contentColor = MaterialTheme.colorScheme.onPrimary,
         interactionSource = interactionSource,
         modifier = Modifier
-            .sharedBoundsOrSelf(SharedKeys.NEW_ENTRY)
+            .sharedPageSourceOrSelf(SharedKeys.NEW_ENTRY, ContentScale.None, Alignment.BottomEnd)
             .size(60.dp)
             .pressScale(interactionSource)
     ) {
@@ -394,7 +411,7 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
             .heightIn(min = 96.dp)
             // 整張資料夾磚縮成分類頁標題旁的那個方塊；圖示、名稱、筆數各自飛到新位置。
             // 只飛圖示跟名稱的話，方塊會在圖示到位之後才淡入，筆數則原地消失，看起來散掉。
-            .sharedBoundsOrSelf(SharedKeys.folderTile(folder.name))
+            .sharedBoxOrSelf(SharedKeys.folderTile(folder.name))
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
@@ -414,14 +431,14 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 folder.name,
-                modifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTitle(folder.name)),
+                modifier = Modifier.sharedTextOrSelf(SharedKeys.folderTitle(folder.name)),
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 "${folder.count} 筆",
-                modifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderCount(folder.name)),
+                modifier = Modifier.sharedTextOrSelf(SharedKeys.folderCount(folder.name)),
                 style = MaterialTheme.typography.labelMedium,
                 color = PassProtectTheme.extraColors.label
             )
@@ -460,9 +477,9 @@ fun CategoryEntriesScreen(
                                 .sharedElementOrSelf(SharedKeys.folderIcon(categoryName))
                         )
                     },
-                    titleModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTitle(categoryName)),
-                    subtitleModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderCount(categoryName)),
-                    leadingModifier = Modifier.sharedBoundsOrSelf(SharedKeys.folderTile(categoryName))
+                    titleModifier = Modifier.sharedTextOrSelf(SharedKeys.folderTitle(categoryName)),
+                    subtitleModifier = Modifier.sharedTextOrSelf(SharedKeys.folderCount(categoryName)),
+                    leadingModifier = Modifier.sharedBoxOrSelf(SharedKeys.folderTile(categoryName))
                 )
             }
             item(key = "gap") { Spacer(Modifier.height(28.dp)) }
@@ -508,7 +525,12 @@ private fun EntryRow(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .sharedBoundsOrSelf(SharedKeys.entryBounds(entry.id))
+                    .sharedPageSourceOrSelf(
+                        SharedKeys.entryBounds(entry.id),
+                        ContentScale.FillWidth,
+                        Alignment.TopCenter,
+                        clip = position.shape()
+                    )
                     .background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { navController.navigate("detail/${entry.id}") }
                     .heightIn(min = 60.dp)
@@ -533,7 +555,7 @@ private fun EntryRow(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         entry.title,
-                        modifier = Modifier.sharedBoundsOrSelf(SharedKeys.entryTitle(entry.id)),
+                        modifier = Modifier.sharedTextOrSelf(SharedKeys.entryTitle(entry.id), ContentScale.FillWidth),
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
