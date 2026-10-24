@@ -87,6 +87,7 @@ import com.passprotect.ui.components.SectionLabel
 import com.passprotect.ui.components.SnippetChip
 import com.passprotect.ui.theme.PassProtectTheme
 import com.passprotect.ui.motion.SharedKeys
+import com.passprotect.ui.motion.sharedPageContentOrSelf
 import com.passprotect.ui.motion.sharedPageOrSelf
 import com.passprotect.vault.Account
 import com.passprotect.vault.Entry
@@ -288,28 +289,30 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
         // 沒有對應的元素可以長，走一般換頁。
         modifier = if (entryId == null) Modifier.sharedPageOrSelf(SharedKeys.NEW_ENTRY) else Modifier,
         topBar = {
-            IconTopBar(
-                onBack = { navController.popBackStack() },
-                centerTitle = if (existing == null) "新增" else "編輯"
-            ) {
-                PillButton(
-                    onClick = {
-                        didAttemptSave = true
-                        saveButtonPhase = SaveButtonPhase.Saving
-                        viewModel.saveEntry(
-                            entryToSave(
-                                existing,
-                                title = title,
-                                url = url,
-                                category = category,
-                                accounts = accountFields.map { AccountDraft(it.id, it.username, it.hint) }
-                            )
-                        )
-                    },
-                    enabled = title.isNotBlank() && saveButtonPhase == SaveButtonPhase.Idle,
-                    modifier = Modifier.padding(end = 6.dp)
+            Box(Modifier.sharedPageContentOrSelf()) {
+                IconTopBar(
+                    onBack = { navController.popBackStack() },
+                    centerTitle = if (existing == null) "新增" else "編輯"
                 ) {
-                    SaveButtonContent(saveButtonPhase)
+                    PillButton(
+                        onClick = {
+                            didAttemptSave = true
+                            saveButtonPhase = SaveButtonPhase.Saving
+                            viewModel.saveEntry(
+                                entryToSave(
+                                    existing,
+                                    title = title,
+                                    url = url,
+                                    category = category,
+                                    accounts = accountFields.map { AccountDraft(it.id, it.username, it.hint) }
+                                )
+                            )
+                        },
+                        enabled = title.isNotBlank() && saveButtonPhase == SaveButtonPhase.Idle,
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        SaveButtonContent(saveButtonPhase)
+                    }
                 }
             }
         }
@@ -317,6 +320,7 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
         Column(
             Modifier
                 .padding(padding)
+                .sharedPageContentOrSelf()
                 // 鍵盤彈出時把可視範圍往上收，讓下面的 verticalScroll 把「目前
                 // 聚焦的欄位還在鍵盤後面」這件事算進可視範圍內，捲動才會真的把
                 // 欄位捲到鍵盤上方，不是捲到一個仍被鍵盤蓋住的位置。

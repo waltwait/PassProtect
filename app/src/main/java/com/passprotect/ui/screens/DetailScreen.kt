@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,7 @@ import com.passprotect.ui.format.historyCountLabel
 import com.passprotect.ui.format.longDate
 import com.passprotect.ui.theme.PassProtectTheme
 import com.passprotect.ui.motion.SharedKeys
+import com.passprotect.ui.motion.sharedPageContentOrSelf
 import com.passprotect.ui.motion.sharedPageOrSelf
 import com.passprotect.ui.motion.sharedTextOrSelf
 import com.passprotect.vault.Account
@@ -61,7 +63,7 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
 
     // 整頁從清單上被點的那一列長出來（容器轉換），標題文字從列上的標題放大到這裡。
     Scaffold(
-        topBar = { IconTopBar(onBack = { navController.popBackStack() }) },
+        topBar = { Box(Modifier.sharedPageContentOrSelf()) { IconTopBar(onBack = { navController.popBackStack() }) } },
         modifier = Modifier.sharedPageOrSelf(SharedKeys.entryBounds(entryId))
     ) { padding ->
         // 記錄可能在這個畫面開著時被刪掉（左滑刪除後立刻點進來、或同步檔被另一台
@@ -77,6 +79,7 @@ fun DetailScreen(entryId: UUID, entries: List<Entry>, navController: NavControll
         Column(
             Modifier
                 .padding(padding)
+                .sharedPageContentOrSelf()
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp)
         ) {

@@ -9,17 +9,24 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.SharedTransitionScope.ResizeMode
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import java.util.UUID
 
@@ -91,11 +98,43 @@ fun Modifier.sharedElementOrSelf(key: String): Modifier {
  *
  * 不淡入淡出：外框一淡掉就看不到它在縮，關閉時只剩被點的那一列在淡入。打開時被點
  * 的東西疊在上面淡出、露出底下這一頁；關閉時這一頁一路不透明地縮回去，被點的東西
- * 在上面淡入接手。
+ * 在上面淡入接手。頁裡的內容另外用 [sharedPageContentOrSelf] 淡入淡出。
  */
 @Composable
 fun Modifier.sharedPageOrSelf(key: String): Modifier =
     sharedBoundsOrSelf(key, PageResize, EnterTransition.None, ExitTransition.None, PageLayer, clip = null)
+
+// 整頁內容的 fade-through 時序：打開時等外框長到大半才淡入，關閉時一開始就淡出。
+private const val PageContentEnterDelayMillis = 90
+private const val PageContentEnterMillis = 180
+private const val PageContentExitMillis = 90
+
+/**
+ * [sharedPageOrSelf] 那一頁裡的內容（頂列、內文），掛在 Scaffold 的頂列與內容上，不掛在
+ * Scaffold 本身——整頁的底色就是外框，要一路不透明地長大縮小。
+ *
+ * 內容照 Material 容器轉換的 fade-through：打開時等外框長到大半才淡入，關閉時一開始就先
+ * 淡出。不這樣做的話內容一路看得到，返回鍵跟頂列會貼著外框上緣，從被點的那一列一路滑上去；
+ * 關閉時整頁又縮小、跟著滑回那一列。共享的標題文字另外在 overlay 裡飛，不受這裡影響。
+ *
+ * 只在共享元素轉場進行中才作用；沒有配對到的一般換頁（例如詳情 → 舊提示）照舊只有換頁淡入淡出。
+ */
+@Composable
+fun Modifier.sharedPageContentOrSelf(): Modifier {
+    val shared = LocalSharedTransitionScope.current ?: return this
+    val animated = LocalNavAnimatedScope.current ?: return this
+    val alpha by animated.transition.animateFloat(
+        transitionSpec = {
+            if (targetState == EnterExitState.Visible) {
+                tween(PageContentEnterMillis, delayMillis = PageContentEnterDelayMillis, easing = LinearOutSlowInEasing)
+            } else {
+                tween(PageContentExitMillis, easing = FastOutLinearInEasing)
+            }
+        },
+        label = "page-content-alpha"
+    ) { state -> if (state == EnterExitState.Visible) 1f else 0f }
+    return graphicsLayer { this.alpha = if (shared.isTransitionActive) alpha else 1f }
+}
 
 /**
  * 長成整頁的那個東西（清單列、FAB）：疊在 [sharedPageOrSelf] 上面，打開時淡出、關閉時淡入。
