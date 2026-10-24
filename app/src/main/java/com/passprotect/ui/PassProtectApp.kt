@@ -1,6 +1,7 @@
 package com.passprotect.ui
 
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -13,8 +14,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -33,8 +32,14 @@ import java.util.UUID
 
 private const val NavDurationMillis = 300
 private const val NavFadeOutMillis = 90
-private val NavSlideDistance = 30.dp
 private val AuthRoutes = setOf("setup", "unlock")
+
+// 推入式換頁：新頁整頁從右邊滑進來蓋住舊頁，舊頁往左退四分之一、淡到 0.7 往後沉。
+// 兩頁同一條曲線、同一段時間（一開始快、最後慢慢停）。
+private const val PushMillis = 350
+private val PushEasing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+private const val BehindAlpha = 0.7f
+private fun <T> pushSpec() = tween<T>(PushMillis, easing = PushEasing)
 
 private fun AnimatedContentTransitionScope<NavBackStackEntry>.crossesAuthGate() =
     initialState.destination.route in AuthRoutes || targetState.destination.route in AuthRoutes
@@ -67,31 +72,28 @@ fun PassProtectApp(viewModel: VaultViewModel) {
         }
     }
 
-    val slidePx = with(LocalDensity.current) { NavSlideDistance.roundToPx() }
-
-    // 換頁用 Material 的「共軸 X（shared axis）」節奏：舊畫面在前 90ms 就淡出，
-    // 新畫面接著淡入，兩者同時只平移一小段距離。之前兩邊在整段時間裡同時交叉
-    // 淡入淡出，中間有一段兩個畫面都半透明疊在一起，文字互相重影。
+    // 換頁一律用推入式：整個過程畫面上一直有一頁是不透明的。之前的共軸換頁讓舊頁先淡到
+    // 全透明、新頁才淡進來，中間約 0.1 秒整個畫面只剩底色，看起來像閃一下。
+    // 返回時 NavHost 會把要離開的那頁疊在上面（zIndex 比底下那頁大），往右滑走就露出底下那頁。
     // 上鎖／解鎖（進出 setup、unlock）不是往下一層鑽，只淡入淡出、不橫向滑。
-    // 其他換頁一律只有這個頁面動畫，不讓頁面上的元件各自飛到下一頁。
     NavHost(
         navController = navController,
         startDestination = "setup",
         enterTransition = {
             if (crossesAuthGate()) navFadeIn()
-            else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { slidePx }
+            else slideInHorizontally(pushSpec()) { it }
         },
         exitTransition = {
             if (crossesAuthGate()) navFadeOut()
-            else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { -slidePx }
+            else slideOutHorizontally(pushSpec()) { -it / 4 } + fadeOut(pushSpec(), targetAlpha = BehindAlpha)
         },
         popEnterTransition = {
             if (crossesAuthGate()) navFadeIn()
-            else navFadeIn() + slideInHorizontally(tween(NavDurationMillis)) { -slidePx }
+            else slideInHorizontally(pushSpec()) { -it / 4 } + fadeIn(pushSpec(), initialAlpha = BehindAlpha)
         },
         popExitTransition = {
             if (crossesAuthGate()) navFadeOut()
-            else navFadeOut() + slideOutHorizontally(tween(NavDurationMillis)) { slidePx }
+            else slideOutHorizontally(pushSpec()) { it }
         }
     ) {
         composable("setup") { SetupScreen(uiState, viewModel) }
