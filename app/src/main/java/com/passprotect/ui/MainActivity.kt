@@ -16,6 +16,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.passprotect.session.AutoLock
@@ -89,9 +92,15 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            PassProtectTheme {
-                Surface {
-                    PassProtectApp(viewModel)
+            // 整個 app 的輸入框共用這份剪貼簿：別的 app 複製來、沒有純文字的內容先轉成
+            // 文字再貼（見 PasteableClipboard）。
+            val platformClipboard = LocalClipboard.current
+            val clipboard = remember(platformClipboard) { PasteableClipboard(platformClipboard, applicationContext) }
+            CompositionLocalProvider(LocalClipboard provides clipboard) {
+                PassProtectTheme {
+                    Surface {
+                        PassProtectApp(viewModel)
+                    }
                 }
             }
         }
@@ -100,13 +109,16 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         autoLock.onReturnToForeground()
+        tickHandler.removeCallbacks(tickRunnable)
         tickHandler.postDelayed(tickRunnable, TICK_INTERVAL_MILLIS)
     }
 
+    // 進背景時計時器不停：離開 app 的寬限期（預設 30 秒）到了就在背景上鎖，不是等使用者
+    // 回來才鎖——不然離開十分鐘，解開的資料庫也在記憶體裡放十分鐘。程序被系統凍結、
+    // 計時器沒跑到的話，AutoLock.onReturnToForeground 回來時會補判。
     override fun onPause() {
         super.onPause()
         autoLock.onEnterBackground()
-        tickHandler.removeCallbacks(tickRunnable)
     }
 
     override fun onUserInteraction() {
@@ -116,6 +128,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        tickHandler.removeCallbacks(tickRunnable)
         unregisterReceiver(screenOffReceiver)
     }
 

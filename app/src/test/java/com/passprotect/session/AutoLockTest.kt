@@ -17,10 +17,19 @@ class AutoLockTest {
     }
 
     @Test
-    fun locksImmediatelyOnBackgroundByDefault() {
-        val (autoLock, _, locks) = subject()
+    fun locksImmediatelyOnBackgroundWhenGraceIsZero() {
+        val (autoLock, _, locks) = subject(AutoLockPolicy(backgroundGraceMillis = 0))
         autoLock.onEnterBackground()
         assertEquals(1, locks())
+    }
+
+    @Test
+    fun defaultGraceLetsYouSwitchAppsBriefly() {
+        val (autoLock, clock, locks) = subject()
+        autoLock.onEnterBackground()
+        clock.now += 20_000
+        autoLock.onReturnToForeground()
+        assertEquals(0, locks())
     }
 
     @Test
@@ -54,6 +63,26 @@ class AutoLockTest {
 
         clock.now += 60_000
         autoLock.tick()
+        assertEquals(0, locks())
+    }
+
+    // 背景時前景的計時器不會跑（程序也可能被系統凍結），寬限期要在回到前景那一刻補判：
+    // 之前回來就直接清掉 backgroundedAt，寬限期大於 0 時等於永遠不會因離開而上鎖。
+    @Test
+    fun returningAfterGraceLocks() {
+        val (autoLock, clock, locks) = subject(AutoLockPolicy(backgroundGraceMillis = 30_000))
+        autoLock.onEnterBackground()
+        clock.now += 31_000
+        autoLock.onReturnToForeground()
+        assertEquals(1, locks())
+    }
+
+    @Test
+    fun returningExactlyAtGraceDeadlineDoesNotLock() {
+        val (autoLock, clock, locks) = subject(AutoLockPolicy(backgroundGraceMillis = 30_000))
+        autoLock.onEnterBackground()
+        clock.now += 30_000
+        autoLock.onReturnToForeground()
         assertEquals(0, locks())
     }
 
@@ -118,7 +147,7 @@ class AutoLockTest {
     fun defaultPolicyMatchesSpec() {
         val policy = AutoLockPolicy()
         assertEquals(true, policy.lockOnBackground)
-        assertEquals(0L, policy.backgroundGraceMillis)
+        assertEquals(30_000L, policy.backgroundGraceMillis)
         assertEquals(5 * 60 * 1000L, policy.idleTimeoutMillis)
     }
 }

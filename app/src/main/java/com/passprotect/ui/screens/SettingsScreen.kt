@@ -122,6 +122,23 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                         )
                     }
                 }
+                GroupedRow(GroupPosition.Middle) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("離開 app 後", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "切到別的 app 多久後上鎖；關螢幕一律立刻上鎖",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = PassProtectTheme.extraColors.label
+                            )
+                        }
+                        SegmentedControl(
+                            options = listOf(0L to "立即", 30_000L to "30 秒", 60_000L to "1 分鐘"),
+                            selected = uiState.autoLockPolicy.backgroundGraceMillis,
+                            onSelect = { viewModel.setBackgroundGrace(it) }
+                        )
+                    }
+                }
                 GroupedRow(GroupPosition.Last, onClick = { changingPassword = !changingPassword }) {
                     Text("變更主密碼", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     val rotation by animateFloatAsState(if (changingPassword) 180f else 0f, label = "change-password-chevron")

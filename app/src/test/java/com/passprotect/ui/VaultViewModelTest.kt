@@ -251,6 +251,13 @@ class VaultViewModelTest {
     }
 
     @Test
+    fun setBackgroundGraceUpdatesPolicy() = runTest {
+        val vm = VaultViewModel()
+        vm.setBackgroundGrace(60_000L)
+        assertEquals(60_000L, vm.uiState.value.autoLockPolicy.backgroundGraceMillis)
+    }
+
+    @Test
     fun changeMasterPasswordReserializesAndSaves() = runTest {
         val bytes = Vault.create(fastKdf).serialize(pw("old-password"))
         val vm = readyViewModel(bytes)

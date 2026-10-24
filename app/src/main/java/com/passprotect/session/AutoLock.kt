@@ -3,8 +3,12 @@ package com.passprotect.session
 /** 規格 §6 的上鎖觸發條件。 */
 data class AutoLockPolicy(
     val lockOnBackground: Boolean = true,
-    /** 進入背景後的寬限期。0 代表立即上鎖。 */
-    val backgroundGraceMillis: Long = 0,
+    /**
+     * 進入背景後的寬限期。0 代表立即上鎖。預設 30 秒：切去別的 app 複製東西、再回來貼上
+     * 不會被鎖在外面（立即上鎖時，解鎖後回到首頁，編輯到一半的畫面也跟著不見）。
+     * 關螢幕不套用寬限期，一律立即上鎖。
+     */
+    val backgroundGraceMillis: Long = 30_000,
     val idleTimeoutMillis: Long = 5 * 60 * 1000
 )
 
@@ -44,8 +48,14 @@ class AutoLock(
         }
     }
 
+    /**
+     * 回到前景時補判寬限期：背景時前景計時器不一定在跑（程序可能被系統凍結），只靠
+     * [tick] 的話，離開超過寬限期再回來也不會上鎖。
+     */
     fun onReturnToForeground() {
+        val awaySince = backgroundedAt
         backgroundedAt = null
+        if (awaySince != null && now() - awaySince > policy.backgroundGraceMillis) fire()
         onUserInteraction()
     }
 

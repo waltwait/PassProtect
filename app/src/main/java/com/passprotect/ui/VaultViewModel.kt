@@ -560,6 +560,10 @@ class VaultViewModel : ViewModel() {
         _uiState.update { it.copy(autoLockPolicy = it.autoLockPolicy.copy(idleTimeoutMillis = millis)) }
     }
 
+    fun setBackgroundGrace(millis: Long) {
+        _uiState.update { it.copy(autoLockPolicy = it.autoLockPolicy.copy(backgroundGraceMillis = millis)) }
+    }
+
     /**
      * 若已啟用生體辨識，[biometric] 不可為 null——重新呼叫 `enroll()` 會用
      * 新密碼蓋掉包裝檔（`BiometricUnlock.enroll()` 內部一開始就 `store.clear()`），
