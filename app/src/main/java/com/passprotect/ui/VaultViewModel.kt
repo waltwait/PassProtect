@@ -606,6 +606,76 @@ class VaultViewModel : ViewModel() {
         viewModelScope.launch { runBackup {} }
     }
 
+    /**
+     * 用 [password] 解開備份 [name]，先把磁碟上目前的資料庫存成「還原前」備份，再把備份的
+     * 原始位元組寫回主檔（不重新序列化）。寫回走 [VaultRepository.save]，外部改動照樣不會被
+     * 蓋掉；跟存檔共用 [persistMutex]。途中被上鎖就什麼都不換——不能因為還原把 session 又解開。
+     * 備份的主密碼跟目前不同時，之後就用它；指紋解鎖已開啟就用它重新綁定（同 [changeMasterPassword]）。
+     */
+    fun restoreBackup(name: String, password: CharArray, biometric: BiometricUnlock?) {
+        val folder = backupFolder
+        val repo = repository
+        if (folder == null || repo == null) {
+            password.wipe()
+            _uiState.update { it.copy(restoreState = RestoreState.Failed) }
+            return
+        }
+        _uiState.update { it.copy(restoreState = RestoreState.Restoring) }
+        viewModelScope.launch {
+            try {
+                val bytes = withContext(unlockDispatcher) { folder.read(name) }
+                val vault = try {
+                    withContext(unlockDispatcher) { Vault.open(bytes, password) }
+                } catch (e: WrongPasswordException) {
+                    _uiState.update { it.copy(restoreState = RestoreState.WrongPassword) }
+                    return@launch
+                }
+                persistMutex.withLock {
+                    val stamp = loadedStamp
+                    if (uiState.value.lockState != LockState.Unlocked || stamp == null) {
+                        _uiState.update { it.copy(restoreState = RestoreState.Failed) }
+                        return@withLock
+                    }
+                    // 沒有退路就不蓋：這一步失敗會丟例外，落到下面的 catch，主檔沒動。
+                    withContext(unlockDispatcher) { LocalBackups.backupBeforeRestore(folder, repo.load().bytes, now()) }
+                    when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                        is SaveResult.Saved -> {
+                            loadedStamp = result.newStamp
+                            if (uiState.value.lockState != LockState.Unlocked) {
+                                _uiState.update { it.copy(restoreState = RestoreState.Failed) }
+                                return@withLock
+                            }
+                            val passwordChanged = !password.contentEquals(masterPasswordCache)
+                            val (entries, hintSnippets) = withContext(unlockDispatcher) {
+                                vault.entries() to vault.hintSnippets()
+                            }
+                            session.unlock(vault)
+                            cacheMasterPassword(password)
+                            _uiState.update { it.copy(entries = entries, hintSnippets = hintSnippets) }
+                            runBackup { LocalBackups.backupDaily(it, bytes, now().toLocalDate(), overwrite = true) }
+                            if (passwordChanged && uiState.value.biometricEnabled && biometric != null) {
+                                enrollBiometric(biometric)
+                            }
+                            _uiState.update { it.copy(restoreState = RestoreState.Done) }
+                        }
+                        is SaveResult.Conflict ->
+                            _uiState.update { it.copy(restoreState = RestoreState.Conflict(result.conflictFileName)) }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(restoreState = RestoreState.Failed) }
+            } finally {
+                password.wipe()
+            }
+        }
+    }
+
+    fun clearRestoreState() {
+        _uiState.update { it.copy(restoreState = RestoreState.Idle) }
+    }
+
     private fun restoreBackupFolder(appContext: Context) {
         val uri = BackupLocationPrefs(appContext).get() ?: return
         if (!VaultUriPermissions.isStillGranted(appContext, uri)) return

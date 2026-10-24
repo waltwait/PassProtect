@@ -694,4 +694,104 @@ class VaultViewModelTest {
         assertEquals(SaveMessage.Saved, s.vm.uiState.value.saveMessage)
         assertFalse(s.vm.uiState.value.backupFailed)
     }
+
+    // ---- 還原（規格 2026-10-24-local-backup §4） ----
+
+    private val oldBackup = "PassProtect-2026-10-20.kdbx"
+    private val beforeRestoreName = "PassProtect-2026-10-24-100000-before-restore.kdbx"
+
+    private fun vaultWith(title: String, password: String = "correct horse"): ByteArray =
+        Vault.create(fastKdf).apply { upsert(entry(title)) }.serialize(pw(password))
+
+    @Test
+    fun restoreReplacesTheVaultAndKeepsABeforeRestoreCopy() = runTest {
+        val main = vaultWith("A")
+        val backup = vaultWith("B")
+        val s = backupReady(main)
+        val folder = s.folder!!
+        folder.files[oldBackup] = backup
+        s.vm.unlockWithPassword(pw())
+
+        s.vm.restoreBackup(oldBackup, pw(), biometric = null)
+
+        assertEquals(RestoreState.Done, s.vm.uiState.value.restoreState)
+        assertArrayEquals(backup, s.file.content)
+        assertArrayEquals(main, folder.files[beforeRestoreName])
+        assertEquals(listOf("B"), s.vm.uiState.value.entries.map { it.title })
+        assertArrayEquals(backup, folder.files[todayName])
+    }
+
+    @Test
+    fun wrongPasswordChangesNothing() = runTest {
+        val main = vaultWith("A")
+        val s = backupReady(main)
+        s.folder!!.files[oldBackup] = vaultWith("B")
+        s.vm.unlockWithPassword(pw())
+
+        s.vm.restoreBackup(oldBackup, pw("wrong horse"), biometric = null)
+
+        assertEquals(RestoreState.WrongPassword, s.vm.uiState.value.restoreState)
+        assertArrayEquals(main, s.file.content)
+        assertFalse(beforeRestoreName in s.folder.files)
+        assertEquals(listOf("A"), s.vm.uiState.value.entries.map { it.title })
+    }
+
+    @Test
+    fun restoreWithItsOwnPasswordKeepsUsingIt() = runTest {
+        val s = backupReady(vaultWith("A"))
+        s.folder!!.files[oldBackup] = vaultWith("B", password = "old horse")
+        s.vm.unlockWithPassword(pw())
+
+        s.vm.restoreBackup(oldBackup, pw("old horse"), biometric = null)
+        s.vm.saveEntry(entry("C"))
+
+        assertEquals(SaveMessage.Saved, s.vm.uiState.value.saveMessage)
+        val titles = Vault.open(s.file.content, pw("old horse")).entries().map { it.title }.toSet()
+        assertEquals(setOf("B", "C"), titles)
+    }
+
+    @Test
+    fun beforeRestoreCopyFailureAborts() = runTest {
+        val main = vaultWith("A")
+        val s = backupReady(main)
+        s.folder!!.files[oldBackup] = vaultWith("B")
+        s.vm.unlockWithPassword(pw())
+        s.folder.failWrites = true
+
+        s.vm.restoreBackup(oldBackup, pw(), biometric = null)
+
+        assertEquals(RestoreState.Failed, s.vm.uiState.value.restoreState)
+        assertArrayEquals(main, s.file.content)
+        assertEquals(listOf("A"), s.vm.uiState.value.entries.map { it.title })
+    }
+
+    @Test
+    fun conflictDuringRestoreLeavesTheSessionAlone() = runTest {
+        val s = backupReady(vaultWith("A"))
+        s.folder!!.files[oldBackup] = vaultWith("B")
+        s.vm.unlockWithPassword(pw())
+        s.file.content = s.file.content + byteArrayOf(0)
+
+        s.vm.restoreBackup(oldBackup, pw(), biometric = null)
+
+        assertTrue(s.vm.uiState.value.restoreState is RestoreState.Conflict)
+        assertEquals(listOf("A"), s.vm.uiState.value.entries.map { it.title })
+    }
+
+    @Test
+    fun lockDuringRestoreLeavesEverythingAsIs() = runTest {
+        val main = vaultWith("A")
+        val s = backupReady(main)
+        val folder = s.folder!!
+        folder.files[oldBackup] = vaultWith("B")
+        s.vm.unlockWithPassword(pw())
+        folder.onRead = { s.vm.lock() }
+
+        s.vm.restoreBackup(oldBackup, pw(), biometric = null)
+
+        assertEquals(LockState.Locked, s.vm.uiState.value.lockState)
+        assertTrue(s.vm.uiState.value.entries.isEmpty())
+        assertArrayEquals(main, s.file.content)
+        assertEquals(RestoreState.Failed, s.vm.uiState.value.restoreState)
+    }
 }

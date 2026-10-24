@@ -47,8 +47,22 @@ data class VaultUiState(
     /** 資料夾裡認得出來的備份，最新在前。 */
     val backups: List<BackupEntry> = emptyList(),
     /** 最近一次備份（解鎖、存檔、立即備份）失敗。不影響解鎖、存檔本身，只在設定頁顯示。 */
-    val backupFailed: Boolean = false
+    val backupFailed: Boolean = false,
+    val restoreState: RestoreState = RestoreState.Idle
 )
+
+/** 從備份還原的進度（規格 2026-10-24-local-backup §4），還原面板照這個畫。 */
+sealed interface RestoreState {
+    data object Idle : RestoreState
+    data object Restoring : RestoreState
+    /** 輸入的主密碼解不開那份備份。什麼都沒動。 */
+    data object WrongPassword : RestoreState
+    /** 讀不到備份、存不了「還原前」那份、或途中被上鎖。主檔沒動。 */
+    data object Failed : RestoreState
+    /** 主檔在這段期間被外部改過：備份內容另存成 [conflictFileName]，目前的資料庫沒換。 */
+    data class Conflict(val conflictFileName: String) : RestoreState
+    data object Done : RestoreState
+}
 
 /**
  * 解鎖失敗的原因，供畫面挑對應的錯誤訊息與復原動作。
