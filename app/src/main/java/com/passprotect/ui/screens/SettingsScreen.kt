@@ -105,7 +105,6 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
             Column(Modifier.padding(horizontal = 16.dp)) {
                 SwitchRow(
                     title = "生體辨識解鎖",
-                    description = "用指紋或臉部辨識取代輸入主密碼",
                     checked = uiState.biometricEnabled,
                     onCheckedChange = { enabled ->
                         if (enabled) {
@@ -118,14 +117,7 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                 )
                 GroupedRow(GroupPosition.Middle) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("自動上鎖", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "沒有操作多久後自動上鎖",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = PassProtectTheme.extraColors.label
-                            )
-                        }
+                        Text("自動上鎖", style = MaterialTheme.typography.bodyMedium)
                         SegmentedControl(
                             options = listOf(60_000L to "1 分鐘", 300_000L to "5 分鐘", 900_000L to "15 分鐘"),
                             selected = uiState.autoLockPolicy.idleTimeoutMillis,
@@ -135,14 +127,7 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                 }
                 GroupedRow(GroupPosition.Middle) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("離開 app 後", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "切到別的 app 多久後上鎖；關螢幕一律立刻上鎖",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = PassProtectTheme.extraColors.label
-                            )
-                        }
+                        Text("離開 app 後", style = MaterialTheme.typography.bodyMedium)
                         SegmentedControl(
                             options = listOf(0L to "立即", 30_000L to "30 秒", 60_000L to "1 分鐘"),
                             selected = uiState.autoLockPolicy.backgroundGraceMillis,
@@ -204,11 +189,6 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    "存一些常用的字詞，編輯提示時可以直接點選組合，不用每次重打",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = PassProtectTheme.extraColors.label
-                )
                 PassProtectField(
                     value = newSnippet,
                     onValueChange = { newSnippet = it },
@@ -252,14 +232,7 @@ fun SettingsScreen(uiState: VaultUiState, navController: NavController, viewMode
                     tint = PassProtectTheme.extraColors.label,
                     modifier = Modifier.size(22.dp)
                 )
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("資料庫位置", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "重新選擇同步資料夾",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = PassProtectTheme.extraColors.label
-                    )
-                }
+                Text("資料庫位置", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Icon(
                     Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                     contentDescription = null,

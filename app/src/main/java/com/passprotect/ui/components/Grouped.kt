@@ -96,7 +96,6 @@ fun GroupedRow(
 @Composable
 fun SwitchRow(
     title: String,
-    description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     position: GroupPosition,
@@ -106,14 +105,7 @@ fun SwitchRow(
         position = position,
         modifier = modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                description,
-                style = MaterialTheme.typography.labelMedium,
-                color = PassProtectTheme.extraColors.label
-            )
-        }
+        Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         Switch(
             checked = checked,
             onCheckedChange = null,
