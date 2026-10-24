@@ -1,5 +1,6 @@
 package com.passprotect.ui
 
+import com.passprotect.storage.BackupEntry
 import com.passprotect.session.AutoLockPolicy
 import com.passprotect.session.LockState
 import com.passprotect.vault.Entry
@@ -40,7 +41,13 @@ data class VaultUiState(
      * 不用每次都重打同一種提示句型。跟 [entries] 一樣，解鎖成功、或
      * `addHintSnippet`/`removeHintSnippet` 改動後就同步更新。
      */
-    val hintSnippets: List<String> = emptyList()
+    val hintSnippets: List<String> = emptyList(),
+    /** 本地備份資料夾的名稱；null 代表還沒設定或授權已失效（規格 2026-10-24-local-backup）。 */
+    val backupFolderName: String? = null,
+    /** 資料夾裡認得出來的備份，最新在前。 */
+    val backups: List<BackupEntry> = emptyList(),
+    /** 最近一次備份（解鎖、存檔、立即備份）失敗。不影響解鎖、存檔本身，只在設定頁顯示。 */
+    val backupFailed: Boolean = false
 )
 
 /**

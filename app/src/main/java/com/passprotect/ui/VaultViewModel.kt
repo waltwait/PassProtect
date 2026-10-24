@@ -16,9 +16,12 @@ import com.passprotect.crypto.wipe
 import com.passprotect.session.AutoLockPolicy
 import com.passprotect.session.LockState
 import com.passprotect.session.VaultSession
+import com.passprotect.storage.BackupFolder
 import com.passprotect.storage.BackupStore
 import com.passprotect.storage.FileBackupStore
 import com.passprotect.storage.FileStamp
+import com.passprotect.storage.LocalBackups
+import com.passprotect.storage.SafBackupFolder
 import com.passprotect.storage.SafVaultFile
 import com.passprotect.storage.SaveResult
 import com.passprotect.storage.VaultFile
@@ -29,6 +32,7 @@ import com.passprotect.vault.Entry
 import com.passprotect.vault.UnsupportedVaultFormatException
 import com.passprotect.vault.Vault
 import com.passprotect.vault.WrongPasswordException
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -112,12 +116,19 @@ class VaultViewModel : ViewModel() {
      */
     private var unlockDispatcher: CoroutineDispatcher = Dispatchers.Default
 
+    /** 使用者選的本地備份資料夾；null 代表沒設定（規格 2026-10-24-local-backup）。 */
+    private var backupFolder: BackupFolder? = null
+
+    /** 每日備份用的「現在」。以欄位注入，理由同 [unlockDispatcher]：測試要能跨過午夜。 */
+    private var now: () -> LocalDateTime = LocalDateTime::now
+
     // ---- 首次設定 / 資料夾偵測 ----
 
     fun checkExistingSetup(context: Context) {
         val appContext = context.applicationContext
         val biometricEnabled = com.passprotect.crypto.WrappedKeyStore(keyDir(appContext)).exists()
         _uiState.update { it.copy(biometricEnabled = biometricEnabled) }
+        restoreBackupFolder(appContext)
 
         val location = VaultLocationPrefs(appContext).get()
         if (location == null || !VaultUriPermissions.isStillGranted(appContext, location.treeUri)) {
@@ -398,6 +409,8 @@ class VaultViewModel : ViewModel() {
                     isUnlocking = false
                 )
             }
+            // 今天還沒備份就備一份：只在電腦上改、同步過來的內容也備得到。
+            runBackup { LocalBackups.backupDaily(it, loaded.bytes, now().toLocalDate(), overwrite = false) }
         } catch (e: WrongPasswordException) {
             _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD, isUnlocking = false) }
         } catch (e: UnsupportedVaultFormatException) {
@@ -497,6 +510,8 @@ class VaultViewModel : ViewModel() {
                         // 同 attemptUnlock：解出所有記錄放在背景，「已儲存」的打勾動畫才不會卡一下。
                         val entries = withContext(unlockDispatcher) { vault.entries() }
                         _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = entries) }
+                        // 今天那份跟著更新，所以每一份是那天最後的樣子。衝突時主檔沒寫入，不備份。
+                        runBackup { LocalBackups.backupDaily(it, bytes, now().toLocalDate(), overwrite = true) }
                     }
                     is SaveResult.Conflict -> {
                         val entries = withContext(unlockDispatcher) { vault.entries() }
@@ -562,6 +577,61 @@ class VaultViewModel : ViewModel() {
 
     fun setBackgroundGrace(millis: Long) {
         _uiState.update { it.copy(autoLockPolicy = it.autoLockPolicy.copy(backgroundGraceMillis = millis)) }
+    }
+
+    // ---- 本地備份（規格 2026-10-24-local-backup） ----
+
+    /** 設定頁選了備份資料夾：取得持久授權、記住它，馬上備份一份。 */
+    fun chooseBackupFolder(context: Context, treeUri: Uri) {
+        val appContext = context.applicationContext
+        val dir = DocumentFile.fromTreeUri(appContext, treeUri) ?: return
+        VaultUriPermissions.persist(appContext, treeUri)
+        BackupLocationPrefs(appContext).put(treeUri)
+        val folder = SafBackupFolder(appContext, dir)
+        backupFolder = folder
+        _uiState.update { it.copy(backupFolderName = folder.displayName) }
+        backupNow()
+    }
+
+    /** 立即備份：把磁碟上目前的資料庫覆蓋成今天那份。 */
+    fun backupNow() {
+        val repo = repository ?: return
+        viewModelScope.launch {
+            runBackup { LocalBackups.backupDaily(it, repo.load().bytes, now().toLocalDate(), overwrite = true) }
+        }
+    }
+
+    /** 設定頁打開時重讀資料夾，顯示最後一次備份時間與還原清單。 */
+    fun refreshBackups() {
+        viewModelScope.launch { runBackup {} }
+    }
+
+    private fun restoreBackupFolder(appContext: Context) {
+        val uri = BackupLocationPrefs(appContext).get() ?: return
+        if (!VaultUriPermissions.isStillGranted(appContext, uri)) return
+        val dir = DocumentFile.fromTreeUri(appContext, uri) ?: return
+        val folder = SafBackupFolder(appContext, dir)
+        backupFolder = folder
+        _uiState.update { it.copy(backupFolderName = folder.displayName) }
+    }
+
+    /**
+     * 對備份資料夾做一件事，再重讀清單。沒設資料夾就什麼都不做。任何失敗都只記成
+     * [VaultUiState.backupFailed]，絕不往外丟——備份不能讓解鎖或存檔失敗。
+     */
+    private suspend fun runBackup(block: (BackupFolder) -> Unit) {
+        val folder = backupFolder ?: return
+        try {
+            val backups = withContext(unlockDispatcher) {
+                block(folder)
+                LocalBackups.list(folder)
+            }
+            _uiState.update { it.copy(backups = backups, backupFailed = false) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _uiState.update { it.copy(backupFailed = true) }
+        }
     }
 
     /**
@@ -675,6 +745,15 @@ class VaultViewModel : ViewModel() {
     /** 見 [unlockDispatcher] 的 KDoc：讓測試把背景運算換成不切執行緒的 dispatcher。 */
     internal fun setUnlockDispatcherForTest(dispatcher: CoroutineDispatcher) {
         unlockDispatcher = dispatcher
+    }
+
+    internal fun setBackupFolderForTest(folder: BackupFolder?) {
+        backupFolder = folder
+        _uiState.update { it.copy(backupFolderName = folder?.displayName) }
+    }
+
+    internal fun setClockForTest(now: () -> LocalDateTime) {
+        this.now = now
     }
 
     internal companion object {

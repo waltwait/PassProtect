@@ -2,14 +2,20 @@ package com.passprotect.ui
 
 import com.passprotect.crypto.KdfParams
 import com.passprotect.session.LockState
+import com.passprotect.storage.FakeBackupFolder
 import com.passprotect.storage.FileStamp
 import com.passprotect.storage.VaultFile
 import com.passprotect.storage.VaultRepository
 import com.passprotect.vault.Vault
+import java.time.Instant
+import java.time.LocalDateTime
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -560,5 +566,132 @@ class VaultViewModelTest {
         vm.saveEntry(entry)
 
         assertEquals("工作", vm.uiState.value.entries.single().category)
+    }
+
+    // ---- 本地備份（規格 2026-10-24-local-backup §3） ----
+
+    private val backupDay = LocalDateTime.of(2026, 10, 24, 10, 0)
+    private val todayName = "PassProtect-2026-10-24.kdbx"
+
+    private fun entry(title: String) = com.passprotect.vault.Entry(
+        id = UUID.randomUUID(),
+        title = title,
+        accounts = listOf(com.passprotect.vault.Account(id = UUID.randomUUID(), hint = "提示")),
+        modifiedAt = Instant.now()
+    )
+
+    private class BackupSetup(val vm: VaultViewModel, val file: FakeVaultFile, val folder: FakeBackupFolder?)
+
+    private fun backupReady(
+        bytes: ByteArray,
+        folder: FakeBackupFolder? = FakeBackupFolder(),
+        now: () -> LocalDateTime = { backupDay }
+    ): BackupSetup {
+        val file = FakeVaultFile(bytes)
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(VaultRepository(file, FakeBackupStore()), FileStamp.of(bytes, file.lastModified()))
+            setUnlockDispatcherForTest(Dispatchers.Unconfined)
+            setBackupFolderForTest(folder)
+            setClockForTest(now)
+        }
+        return BackupSetup(vm, file, folder)
+    }
+
+    @Test
+    fun unlockBacksUpTodayOnce() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val s = backupReady(bytes)
+        val folder = s.folder!!
+
+        s.vm.unlockWithPassword(pw())
+        assertArrayEquals(bytes, folder.files[todayName])
+
+        folder.files[todayName] = byteArrayOf(7)
+        s.vm.lock()
+        s.vm.unlockWithPassword(pw())
+        assertArrayEquals(byteArrayOf(7), folder.files[todayName])
+    }
+
+    @Test
+    fun saveRefreshesTodaysBackup() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val s = backupReady(bytes)
+        s.vm.unlockWithPassword(pw())
+
+        s.vm.saveEntry(entry("github.com"))
+
+        assertEquals(SaveMessage.Saved, s.vm.uiState.value.saveMessage)
+        assertFalse(s.file.content.contentEquals(bytes))
+        assertArrayEquals(s.file.content, s.folder!!.files[todayName])
+    }
+
+    @Test
+    fun conflictedSaveDoesNotBackUp() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val s = backupReady(bytes)
+        s.vm.unlockWithPassword(pw())
+        s.file.content = s.file.content + byteArrayOf(0)
+
+        s.vm.saveEntry(entry("conflict"))
+
+        assertTrue(s.vm.uiState.value.saveMessage is SaveMessage.Conflict)
+        assertArrayEquals(bytes, s.folder!!.files[todayName])
+    }
+
+    @Test
+    fun folderErrorsNeverFailUnlockOrSave() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val s = backupReady(bytes)
+        val folder = s.folder!!
+        folder.failWrites = true
+
+        s.vm.unlockWithPassword(pw())
+        assertEquals(LockState.Unlocked, s.vm.uiState.value.lockState)
+        s.vm.saveEntry(entry("github.com"))
+        assertEquals(SaveMessage.Saved, s.vm.uiState.value.saveMessage)
+        assertTrue(s.vm.uiState.value.backupFailed)
+
+        folder.failWrites = false
+        s.vm.backupNow()
+        assertFalse(s.vm.uiState.value.backupFailed)
+    }
+
+    @Test
+    fun saveAfterMidnightStartsANewDay() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        var now = LocalDateTime.of(2026, 10, 24, 23, 59)
+        val s = backupReady(bytes, now = { now })
+        s.vm.unlockWithPassword(pw())
+
+        now = LocalDateTime.of(2026, 10, 25, 0, 1)
+        s.vm.saveEntry(entry("github.com"))
+
+        assertArrayEquals(bytes, s.folder!!.files[todayName])
+        assertArrayEquals(s.file.content, s.folder.files["PassProtect-2026-10-25.kdbx"])
+    }
+
+    @Test
+    fun backupNowWritesTheCurrentFile() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val s = backupReady(bytes)
+        s.vm.unlockWithPassword(pw())
+        s.folder!!.files[todayName] = byteArrayOf(7)
+
+        s.vm.backupNow()
+
+        assertArrayEquals(s.file.content, s.folder.files[todayName])
+        assertEquals(1, s.vm.uiState.value.backups.size)
+    }
+
+    @Test
+    fun noFolderMeansNoBackupAndNoError() = runTest {
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val s = backupReady(bytes, folder = null)
+
+        s.vm.unlockWithPassword(pw())
+        s.vm.saveEntry(entry("github.com"))
+
+        assertEquals(SaveMessage.Saved, s.vm.uiState.value.saveMessage)
+        assertFalse(s.vm.uiState.value.backupFailed)
     }
 }
