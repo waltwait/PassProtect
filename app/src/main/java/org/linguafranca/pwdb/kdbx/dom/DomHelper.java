@@ -21,6 +21,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.linguafranca.pwdb.kdbx.Helpers;
 import org.w3c.dom.Element;
+import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 import javax.xml.xpath.XPath;
@@ -29,6 +30,8 @@ import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 import java.time.Instant;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The class contains static helper methods for access to the underlying XML DOM
@@ -103,10 +106,79 @@ public class DomHelper {
     }
 
 
+    // PassProtect 加的：簡單的路徑（"Times/LastModificationTime"、"String[Key/text()='Title']"、"."）
+    // 直接走 DOM 子節點，不交給 XPath。javax.xml.xpath 每次 evaluate 的成本跟整份文件一樣大，
+    // 讀每一筆記錄的每一個欄位都付一次，記錄一多解鎖就是平方成長（電腦上 300 筆 36 秒）。
+    // 其他寫法（"//"、屬性、別的條件）照舊交給 XPath。結果必須跟 XPath 一模一樣，見
+    // DomHelperSimplePathTest。
+    private static final Pattern KEYED_CHILD = Pattern.compile("([A-Za-z_][A-Za-z0-9_]*)\\[Key/text\\(\\)='([^']*)'\\]");
+    private static final Pattern CHILD_PATH = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*");
+
+    /** 簡單路徑的結果（文件順序）；不是簡單路徑、或碰到 XPath 會另作解讀的內容時回傳 null。 */
+    @Nullable
+    static List<Element> findSimple(String path, Element parent) {
+        if (".".equals(path)) {
+            return Collections.singletonList(parent);
+        }
+        Matcher keyed = KEYED_CHILD.matcher(path);
+        if (keyed.matches()) {
+            List<Element> result = new ArrayList<>();
+            for (Element child : childElements(parent, keyed.group(1))) {
+                for (Element key : childElements(child, "Key")) {
+                    // XPath 的 text() 把相鄰的文字／CDATA 節點當成同一段，沒有文字節點就沒有 text()。
+                    // Key 底下混了別種節點時，比對方式不一樣，交回給 XPath。
+                    if (!hasOnlyText(key)) {
+                        return null;
+                    }
+                    if (key.hasChildNodes() && key.getTextContent().equals(keyed.group(2))) {
+                        result.add(child);
+                        break;
+                    }
+                }
+            }
+            return result;
+        }
+        if (CHILD_PATH.matcher(path).matches()) {
+            List<Element> current = Collections.singletonList(parent);
+            for (String name : path.split("/")) {
+                List<Element> next = new ArrayList<>();
+                for (Element element : current) {
+                    next.addAll(childElements(element, name));
+                }
+                current = next;
+            }
+            return current;
+        }
+        return null;
+    }
+
+    private static List<Element> childElements(Element parent, String name) {
+        List<Element> result = new ArrayList<>();
+        for (Node child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child.getNodeType() == Node.ELEMENT_NODE && child.getNodeName().equals(name)) {
+                result.add((Element) child);
+            }
+        }
+        return result;
+    }
+
+    private static boolean hasOnlyText(Element element) {
+        for (Node child = element.getFirstChild(); child != null; child = child.getNextSibling()) {
+            short type = child.getNodeType();
+            if (type != Node.TEXT_NODE && type != Node.CDATA_SECTION_NODE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Nullable @Contract("_,_,true -> !null")
     static  Element getElement(String elementPath, Element parentElement, boolean create) {
         try {
-            Element result = (Element) xpath.evaluate(elementPath, parentElement, XPathConstants.NODE);
+            List<Element> simple = findSimple(elementPath, parentElement);
+            Element result = simple != null
+                    ? (simple.isEmpty() ? null : simple.get(0))
+                    : (Element) xpath.evaluate(elementPath, parentElement, XPathConstants.NODE);
             if (result == null && create) {
                 result = createHierarchically(elementPath, parentElement);
             }
@@ -127,6 +199,10 @@ public class DomHelper {
     }
 
     static List<Element> getElements (String elementPath, Element parentElement) {
+        List<Element> simple = findSimple(elementPath, parentElement);
+        if (simple != null) {
+            return simple;
+        }
         try {
             NodeList nodes = (NodeList) xpath.evaluate(elementPath, parentElement, XPathConstants.NODESET);
             ArrayList<Element> result = new ArrayList<>(nodes.getLength());
@@ -140,6 +216,10 @@ public class DomHelper {
     }
 
     static int getElementsCount (String elementPath, Element parentElement) {
+        List<Element> simple = findSimple(elementPath, parentElement);
+        if (simple != null) {
+            return simple.size();
+        }
         try {
             NodeList nodes = (NodeList) xpath.evaluate(elementPath, parentElement, XPathConstants.NODESET);
             return nodes.getLength();
@@ -262,7 +342,10 @@ public class DomHelper {
         Element currentElement = startElement;
         for (String elementName : elementPath.split("/")) {
             try {
-                Element nextElement = (Element) xpath.evaluate(elementName, currentElement, XPathConstants.NODE);
+                List<Element> simple = findSimple(elementName, currentElement);
+                Element nextElement = simple != null
+                        ? (simple.isEmpty() ? null : simple.get(0))
+                        : (Element) xpath.evaluate(elementName, currentElement, XPathConstants.NODE);
                 if (nextElement == null) {
                     nextElement = (Element) currentElement.appendChild(currentElement.getOwnerDocument().createElement(elementName));
                 }
