@@ -147,21 +147,15 @@ private const val SwipeProjectionSeconds = 0.1f
  */
 internal fun swipeActionsShown(offsetPx: Float): Boolean = offsetPx.roundToInt() < 0
 
-private const val FolderPreviewCount = 2
-
-/**
- * 主畫面資料夾格的一格：分類名稱、底下幾筆，跟分類頁最前面兩筆的標題（[preview]，
- * 直接印在資料夾上，不點進去也知道裡面是什麼）。
- */
-internal data class FolderSummary(val name: String, val count: Int, val preview: List<String>)
+/** 主畫面資料夾格的一格：分類名稱與底下幾筆記錄。 */
+internal data class FolderSummary(val name: String, val count: Int)
 
 /** 沒有分類（空白）的記錄不算資料夾，它們直接列在資料夾下方的「未分類」。 */
 internal fun folderSummaries(entries: List<Entry>): List<FolderSummary> =
     entries.filter { it.category.isNotBlank() }
-        .groupBy { it.category }
-        .map { (name, inFolder) ->
-            FolderSummary(name, inFolder.size, inFolder.map { it.title }.sorted().take(FolderPreviewCount))
-        }
+        .groupingBy { it.category }
+        .eachCount()
+        .map { (name, count) -> FolderSummary(name, count) }
         .sortedBy { it.name }
 
 // 在頂端往下拉叫出搜尋框：手指拉的距離只算一半（有阻力），最多拉到整個搜尋框露出來；
@@ -568,17 +562,6 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit, onLongClick: 
                 style = MaterialTheme.typography.labelMedium,
                 color = PassProtectTheme.extraColors.label
             )
-            // 最前面兩筆的標題。不滿兩筆也留兩行，同一排的資料夾才會一樣高。
-            Spacer(Modifier.height(4.dp))
-            repeat(FolderPreviewCount) { index ->
-                Text(
-                    folder.preview.getOrElse(index) { "" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = PassProtectTheme.extraColors.label,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
         }
     }
 }
