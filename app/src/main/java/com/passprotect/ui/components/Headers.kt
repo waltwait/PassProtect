@@ -23,7 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.passprotect.ui.theme.PassProtectTheme
@@ -31,7 +33,9 @@ import com.passprotect.ui.theme.PassProtectTheme
 /**
  * 頂列只放圖示按鈕（返回／搜尋／鎖定／設定），標題不擠在這裡，改在下面用
  * [LargeTitleHeader] 大字顯示、跟著內容一起捲走。編輯頁例外，用 [centerTitle]
- * 放一個置中的小標（「新增」「編輯」），因為右邊有「儲存」要對稱。
+ * 放一個置中的小標（「新增」「編輯」），因為右邊有「儲存」要對稱。主畫面用
+ * [startTitle]：大標題捲走時，同一個標題在左邊淡入（[startTitleAlpha] 在繪製階段讀，
+ * 捲動時不必每一格都重組）。
  *
  * app 是 edge-to-edge（targetSdk 36），頂列自己吃掉狀態列高度，原本這件事是
  * Material 的 `TopAppBar` 代勞的。
@@ -40,6 +44,8 @@ import com.passprotect.ui.theme.PassProtectTheme
 fun IconTopBar(
     onBack: (() -> Unit)? = null,
     centerTitle: String? = null,
+    startTitle: String? = null,
+    startTitleAlpha: () -> Float = { 1f },
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Box(
@@ -59,6 +65,19 @@ fun IconTopBar(
         }
         if (centerTitle != null) {
             Text(centerTitle, style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Center))
+        }
+        if (startTitle != null) {
+            Text(
+                startTitle,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 10.dp)
+                    .graphicsLayer { alpha = startTitleAlpha() }
+                    // 下面的大標題已經唸過一次，這個小標只是視覺上的，不重複唸。
+                    .clearAndSetSemantics {}
+            )
         }
         Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, content = actions)
     }

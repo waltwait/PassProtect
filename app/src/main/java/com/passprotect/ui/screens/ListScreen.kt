@@ -1,14 +1,24 @@
 package com.passprotect.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -21,6 +31,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -28,6 +39,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.focus.focusRequester
@@ -35,8 +47,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Folder
@@ -59,6 +73,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +84,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -76,10 +92,17 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.passprotect.ui.VaultViewModel
@@ -98,6 +121,7 @@ import com.passprotect.ui.theme.PassProtectTheme
 import com.passprotect.vault.Entry
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -123,16 +147,42 @@ private const val SwipeProjectionSeconds = 0.1f
  */
 internal fun swipeActionsShown(offsetPx: Float): Boolean = offsetPx.roundToInt() < 0
 
-/** 主畫面資料夾格的一格：分類名稱與底下幾筆記錄。 */
-internal data class FolderSummary(val name: String, val count: Int)
+private const val FolderPreviewCount = 2
+
+/**
+ * 主畫面資料夾格的一格：分類名稱、底下幾筆，跟分類頁最前面兩筆的標題（[preview]，
+ * 直接印在資料夾上，不點進去也知道裡面是什麼）。
+ */
+internal data class FolderSummary(val name: String, val count: Int, val preview: List<String>)
 
 /** 沒有分類（空白）的記錄不算資料夾，它們直接列在資料夾下方的「未分類」。 */
 internal fun folderSummaries(entries: List<Entry>): List<FolderSummary> =
     entries.filter { it.category.isNotBlank() }
-        .groupingBy { it.category }
-        .eachCount()
-        .map { (name, count) -> FolderSummary(name, count) }
+        .groupBy { it.category }
+        .map { (name, inFolder) ->
+            FolderSummary(name, inFolder.size, inFolder.map { it.title }.sorted().take(FolderPreviewCount))
+        }
         .sortedBy { it.name }
+
+// 在頂端往下拉叫出搜尋框：手指拉的距離只算一半（有阻力），最多拉到整個搜尋框露出來；
+// 放開時露出超過六成就打開，不到就縮回去。
+private const val SearchPullResistance = 0.5f
+private const val SearchPullOpensAt = 0.6f
+// 搜尋框區塊（上方留白＋框本身）的高度，拉的進度用它換算。
+private val SearchAreaHeight = 68.dp
+private val SearchRevealSpec = spring<Float>(Spring.DampingRatioNoBouncy, Spring.StiffnessMediumLow)
+// 大標題往上捲這麼多就整個縮進頂列。
+private val TitleCollapseDistance = 48.dp
+
+/** 從露出 [current]（0～1）再拉 [dragPx] 之後，搜尋框露出多少；[fullPx] 是搜尋框區塊的高度。 */
+internal fun pulledSearchReveal(current: Float, dragPx: Float, fullPx: Float): Float =
+    if (fullPx <= 0f) current else (current + dragPx * SearchPullResistance / fullPx).coerceIn(0f, 1f)
+
+internal fun pullOpensSearch(reveal: Float): Boolean = reveal >= SearchPullOpensAt
+
+/** 大標題縮進頂列的進度：0 是還在原位，1 是只剩頂列的小標。大標題是清單的第一列。 */
+internal fun titleCollapseFraction(firstVisibleIndex: Int, firstVisibleOffsetPx: Int, collapseDistancePx: Float): Float =
+    if (firstVisibleIndex > 0) 1f else (firstVisibleOffsetPx / collapseDistancePx).coerceIn(0f, 1f)
 
 @Composable
 fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: VaultViewModel) {
@@ -155,15 +205,69 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
         if (query.isBlank()) emptyList()
         else entries.filter { it.title.contains(query, ignoreCase = true) }.sortedBy { it.title }
     }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val focusManager = LocalFocusManager.current
+    // 搜尋框露出多少（0～1）：往下拉時跟著手指，放開或按放大鏡時用彈簧收尾。
+    var searchReveal by remember { mutableFloatStateOf(if (searchExpanded) 1f else 0f) }
+    val revealAnimation = remember { arrayOfNulls<Job>(1) }
+    fun animateSearchReveal(target: Float) {
+        revealAnimation[0]?.cancel()
+        revealAnimation[0] = scope.launch {
+            animate(searchReveal, target, animationSpec = SearchRevealSpec) { value, _ -> searchReveal = value }
+        }
+    }
+    fun openSearch() {
+        searchExpanded = true
+        focusSearchOnOpen = true
+        animateSearchReveal(1f)
+    }
     fun closeSearch() {
         searchExpanded = false
         query = ""
+        focusManager.clearFocus()
+        animateSearchReveal(0f)
     }
+    var peekFolder by remember { mutableStateOf<String?>(null) }
     // 搜尋框是 LazyColumn 的第二列，清單捲下去之後點放大鏡，框會在畫面外展開——
     // 圖示變成「關閉搜尋」卻什麼都看不到。展開時先捲回頂端，再把焦點交給搜尋框，
     // 鍵盤直接跳出來，點了就能打字。
     val listState = rememberLazyListState()
     val searchFocus = remember { FocusRequester() }
+    val collapseDistancePx = with(density) { TitleCollapseDistance.toPx() }
+    val titleCollapse by remember(collapseDistancePx) {
+        derivedStateOf {
+            titleCollapseFraction(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, collapseDistancePx)
+        }
+    }
+    // 清單已經在最頂端還往下拉：多出來的距離拿去拉出搜尋框，不是畫邊緣的回彈。拉到一半又往上推，
+    // 先把搜尋框收回去，清單才開始捲。
+    val searchAreaPx = with(density) { SearchAreaHeight.toPx() }
+    val pullToSearch = remember(searchAreaPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (searchExpanded || source != NestedScrollSource.UserInput || available.y >= 0f || searchReveal <= 0f) {
+                    return Offset.Zero
+                }
+                val before = searchReveal
+                searchReveal = pulledSearchReveal(before, available.y, searchAreaPx)
+                return Offset(0f, (searchReveal - before) * searchAreaPx / SearchPullResistance)
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (searchExpanded || source != NestedScrollSource.UserInput || available.y <= 0f) return Offset.Zero
+                revealAnimation[0]?.cancel()
+                searchReveal = pulledSearchReveal(searchReveal, available.y, searchAreaPx)
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (searchExpanded || searchReveal <= 0f) return Velocity.Zero
+                if (pullOpensSearch(searchReveal)) openSearch() else animateSearchReveal(0f)
+                return available
+            }
+        }
+    }
     LaunchedEffect(searchExpanded) {
         if (searchExpanded && focusSearchOnOpen) {
             focusSearchOnOpen = false
@@ -174,104 +278,132 @@ fun ListScreen(entries: List<Entry>, navController: NavController, viewModel: Va
         }
     }
 
-    Scaffold(
-        topBar = {
-            IconTopBar {
-                TopBarIconButton(
-                    Icons.Rounded.Search,
-                    contentDescription = if (searchExpanded) "關閉搜尋" else "搜尋",
-                    onClick = {
-                        if (searchExpanded) {
-                            closeSearch()
-                        } else {
-                            searchExpanded = true
-                            focusSearchOnOpen = true
-                        }
-                    }
-                )
-                TopBarIconButton(Icons.Outlined.Lock, contentDescription = "鎖定", onClick = { viewModel.lock() })
-                TopBarIconButton(Icons.Outlined.Settings, contentDescription = "設定", onClick = { navController.navigate("settings") })
-            }
-        },
-        floatingActionButton = { NewEntryFab(onClick = { navController.navigate("edit_new") }) }
-    ) { padding ->
-        // 大標題、搜尋框、資料夾、未分類全部在同一個 LazyColumn 裡，標題跟著內容
-        // 一起捲走，頂列的三顆圖示按鈕固定不動。底部留白給 FAB，最後一列不會被蓋住。
-        LazyColumn(
-            Modifier
-                .padding(padding)
-                .imePadding(),
-            state = listState,
-            contentPadding = PaddingValues(bottom = 96.dp)
-        ) {
-            item(key = "header") {
-                LargeTitleHeader("提示保險庫", subtitle = "${entries.size} 筆提示", large = true)
-            }
-            item(key = "search") {
-                AnimatedVisibility(visible = searchExpanded) {
-                    SearchField(
-                        query = query,
-                        onQueryChange = { query = it },
-                        onClose = ::closeSearch,
-                        focusRequester = searchFocus,
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp)
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                // 大標題往上捲走時，頂列左邊淡入同一個標題。
+                IconTopBar(startTitle = "提示保險庫", startTitleAlpha = { titleCollapse }) {
+                    TopBarIconButton(
+                        Icons.Rounded.Search,
+                        contentDescription = if (searchExpanded) "關閉搜尋" else "搜尋",
+                        onClick = { if (searchExpanded) closeSearch() else openSearch() }
+                    )
+                    TopBarIconButton(Icons.Outlined.Lock, contentDescription = "鎖定", onClick = { viewModel.lock() })
+                    TopBarIconButton(Icons.Outlined.Settings, contentDescription = "設定", onClick = { navController.navigate("settings") })
+                }
+            },
+            floatingActionButton = { NewEntryFab(onClick = { navController.navigate("edit_new") }) }
+        ) { padding ->
+            // 大標題、搜尋框、資料夾、未分類全部在同一個 LazyColumn 裡，標題跟著內容
+            // 一起捲走，頂列的三顆圖示按鈕固定不動。底部留白給 FAB，最後一列不會被蓋住。
+            LazyColumn(
+                Modifier
+                    .padding(padding)
+                    .imePadding()
+                    .nestedScroll(pullToSearch),
+                state = listState,
+                contentPadding = PaddingValues(bottom = 96.dp)
+            ) {
+                item(key = "header") {
+                    LargeTitleHeader(
+                        "提示保險庫",
+                        subtitle = "${entries.size} 筆提示",
+                        large = true,
+                        modifier = Modifier.graphicsLayer { alpha = 1f - titleCollapse }
                     )
                 }
-            }
-            // 規格 §4.2 的慢速裝置提醒：建立資料庫成功後畫面已經切到這裡，
-            // SetupScreen 早就不在畫面上了，所以這句話得在這裡講。
-            uiState.setupError?.let { message ->
-                item(key = "setup-error") {
-                    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp)) {
-                        Text(message, style = MaterialTheme.typography.bodyMedium)
-                        TextButton(onClick = { viewModel.clearSetupError() }) { Text("知道了") }
+                item(key = "search") {
+                    // 搜尋框從大標題底下滑出來：只畫露出來的那一段（searchReveal），框貼著露出區的底邊。
+                    if (searchExpanded || searchReveal > 0f) {
+                        SearchField(
+                            query = query,
+                            onQueryChange = { query = it },
+                            onClose = ::closeSearch,
+                            focusRequester = searchFocus,
+                            modifier = Modifier
+                                .clipToBounds()
+                                .layout { measurable, constraints ->
+                                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                                    val height = (placeable.height * searchReveal).roundToInt()
+                                    layout(placeable.width, height) { placeable.place(0, height - placeable.height) }
+                                }
+                                .graphicsLayer { alpha = searchReveal }
+                                .padding(start = 16.dp, end = 16.dp, top = 20.dp)
+                        )
                     }
                 }
-            }
-            when {
-                query.isNotBlank() -> {
-                    if (searchResults.isEmpty()) {
-                        item(key = "empty") { EmptyEntriesMessage(hasFilter = true) }
-                    } else {
-                        item(key = "results-gap") { Spacer(Modifier.height(20.dp)) }
-                        // 搜尋結果每打一個字就變一次，這裡不做增刪動畫，結果要即時跟上打字。
-                        itemsIndexed(searchResults, key = { _, it -> it.id.toString() }) { index, entry ->
-                            EntryRow(
-                                entry, EntryRowMode.Search, GroupPosition.of(index, searchResults.size),
-                                navController, viewModel,
-                                Modifier.padding(horizontal = 16.dp)
-                            )
+                // 規格 §4.2 的慢速裝置提醒：建立資料庫成功後畫面已經切到這裡，
+                // SetupScreen 早就不在畫面上了，所以這句話得在這裡講。
+                uiState.setupError?.let { message ->
+                    item(key = "setup-error") {
+                        Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp)) {
+                            Text(message, style = MaterialTheme.typography.bodyMedium)
+                            TextButton(onClick = { viewModel.clearSetupError() }) { Text("知道了") }
                         }
                     }
                 }
-                entries.isEmpty() -> item(key = "empty") { EmptyEntriesMessage(hasFilter = false) }
-                else -> {
-                    // 分類是 Finder 式的資料夾格：點資料夾換頁看該分類底下的記錄（見
-                    // CategoryEntriesScreen），沒有分類的記錄直接列在資料夾下方——跟
-                    // Finder 資料夾／散落檔案並存同一層的邏輯一樣。
-                    if (folders.isNotEmpty()) {
-                        item(key = "folders-label") { SectionLabel("資料夾") }
-                        item(key = "folders") {
-                            CategoryFolderGrid(folders, onSelect = { name -> navController.navigate(categoryRoute(name)) })
+                when {
+                    query.isNotBlank() -> {
+                        if (searchResults.isEmpty()) {
+                            item(key = "empty") { EmptyEntriesMessage(hasFilter = true) }
+                        } else {
+                            item(key = "results-gap") { Spacer(Modifier.height(20.dp)) }
+                            // 搜尋結果每打一個字就變一次，這裡不做增刪動畫，結果要即時跟上打字。
+                            itemsIndexed(searchResults, key = { _, it -> it.id.toString() }) { index, entry ->
+                                EntryRow(
+                                    entry, EntryRowMode.Search, GroupPosition.of(index, searchResults.size),
+                                    navController, viewModel,
+                                    Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
                         }
                     }
-                    if (uncategorized.isNotEmpty()) {
-                        item(key = "uncategorized-label") {
-                            if (folders.isNotEmpty()) SectionLabel("未分類") else Spacer(Modifier.height(24.dp))
+                    entries.isEmpty() -> item(key = "empty") { EmptyEntriesMessage(hasFilter = false) }
+                    else -> {
+                        // 分類是 Finder 式的資料夾格：點資料夾換頁看該分類底下的記錄（見
+                        // CategoryEntriesScreen），沒有分類的記錄直接列在資料夾下方——跟
+                        // Finder 資料夾／散落檔案並存同一層的邏輯一樣。
+                        if (folders.isNotEmpty()) {
+                            item(key = "folders-label") { SectionLabel("資料夾") }
+                            item(key = "folders") {
+                                CategoryFolderGrid(
+                                    folders,
+                                    onSelect = { name -> navController.navigate(categoryRoute(name)) },
+                                    onPeek = { name -> peekFolder = name }
+                                )
+                            }
                         }
-                        itemsIndexed(uncategorized, key = { _, it -> it.id.toString() }) { index, entry ->
-                            EntryRow(
-                                entry, EntryRowMode.Browse, GroupPosition.of(index, uncategorized.size),
-                                navController, viewModel,
-                                Modifier
-                                    .animateItem()
-                                    .padding(horizontal = 16.dp)
-                            )
+                        if (uncategorized.isNotEmpty()) {
+                            item(key = "uncategorized-label") {
+                                if (folders.isNotEmpty()) SectionLabel("未分類") else Spacer(Modifier.height(24.dp))
+                            }
+                            itemsIndexed(uncategorized, key = { _, it -> it.id.toString() }) { index, entry ->
+                                EntryRow(
+                                    entry, EntryRowMode.Browse, GroupPosition.of(index, uncategorized.size),
+                                    navController, viewModel,
+                                    Modifier
+                                        .animateItem()
+                                        .padding(horizontal = 16.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+        FolderPeek(
+            folderName = peekFolder,
+            entries = entries,
+            onOpenEntry = { entry ->
+                peekFolder = null
+                navController.navigate("detail/${entry.id}")
+            },
+            onOpenFolder = { name ->
+                peekFolder = null
+                navController.navigate(categoryRoute(name))
+            },
+            onDismiss = { peekFolder = null }
+        )
     }
 }
 
@@ -372,7 +504,7 @@ private fun NewEntryFab(onClick: () -> Unit) {
  * Spacer 補位，維持同一套三欄格線。
  */
 @Composable
-private fun CategoryFolderGrid(folders: List<FolderSummary>, onSelect: (String) -> Unit) {
+private fun CategoryFolderGrid(folders: List<FolderSummary>, onSelect: (String) -> Unit, onPeek: (String) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -383,7 +515,7 @@ private fun CategoryFolderGrid(folders: List<FolderSummary>, onSelect: (String) 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { folder ->
                     Box(Modifier.weight(1f)) {
-                        FolderTile(folder, onClick = { onSelect(folder.name) })
+                        FolderTile(folder, onClick = { onSelect(folder.name) }, onLongClick = { onPeek(folder.name) })
                     }
                 }
                 repeat(3 - row.size) {
@@ -394,17 +526,26 @@ private fun CategoryFolderGrid(folders: List<FolderSummary>, onSelect: (String) 
     }
 }
 
+/** 點了進分類頁，長按浮出預覽（[FolderPeek]，長按時手機會輕震一下）。 */
 @Composable
-private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
+private fun FolderTile(folder: FolderSummary, onClick: () -> Unit, onLongClick: () -> Unit) {
     val shape = MaterialTheme.shapes.medium
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 96.dp)
+            .pressScale(interactionSource)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onLongClickLabel = "預覽",
+                onLongClick = onLongClick,
+                onClick = onClick
+            )
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -427,6 +568,157 @@ private fun FolderTile(folder: FolderSummary, onClick: () -> Unit) {
                 style = MaterialTheme.typography.labelMedium,
                 color = PassProtectTheme.extraColors.label
             )
+            // 最前面兩筆的標題。不滿兩筆也留兩行，同一排的資料夾才會一樣高。
+            Spacer(Modifier.height(4.dp))
+            repeat(FolderPreviewCount) { index ->
+                Text(
+                    folder.preview.getOrElse(index) { "" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = PassProtectTheme.extraColors.label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private val PeekEnterEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+
+/**
+ * 長按資料夾浮出來的預覽：這個分類底下的記錄。點一筆直接開詳情，點最上面的資料夾列進分類頁，
+ * 點外面或按返回收起。畫在主畫面同一個視窗裡、不另開 Dialog 視窗，截圖保護（FLAG_SECURE）
+ * 一樣蓋得到。
+ */
+@Composable
+private fun FolderPeek(
+    folderName: String?,
+    entries: List<Entry>,
+    onOpenEntry: (Entry) -> Unit,
+    onOpenFolder: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // 收起的動畫途中 folderName 已經是 null，記住最後一個，淡出時卡片裡才還有東西。
+    var shown by remember { mutableStateOf(folderName) }
+    if (folderName != null) shown = folderName
+    BackHandler(enabled = folderName != null, onBack = onDismiss)
+
+    AnimatedVisibility(
+        visible = folderName != null,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(120))
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.32f))
+                .clickable(interactionSource = null, indication = null, onClick = onDismiss)
+                .systemBarsPadding()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val name = shown ?: return@Box
+            val inFolder = remember(entries, name) { entries.filter { it.category == name }.sortedBy { it.title } }
+            val now = remember { Instant.now() }
+            val shape = MaterialTheme.shapes.large
+            Column(
+                Modifier
+                    .animateEnterExit(
+                        enter = scaleIn(tween(220, easing = PeekEnterEasing), initialScale = 0.92f),
+                        exit = scaleOut(tween(120), targetScale = 0.96f)
+                    )
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                    // 點到卡片上沒有東西的地方不要當成點外面。
+                    .clickable(interactionSource = null, indication = null) {}
+            ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenFolder(name) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Folder,
+                        contentDescription = null,
+                        tint = PassProtectTheme.extraColors.label,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${inFolder.size} 筆",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = PassProtectTheme.extraColors.label
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = PassProtectTheme.extraColors.label.copy(alpha = 0.6f)
+                    )
+                }
+                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    inFolder.forEachIndexed { index, entry ->
+                        if (index > 0) {
+                            HorizontalDivider(
+                                thickness = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                modifier = Modifier.padding(start = 58.dp)
+                            )
+                        }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenEntry(entry) }
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(30.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Key,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    entry.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    entryRowSubtitle(entry, EntryRowMode.Browse, now, ZoneId.systemDefault()),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = PassProtectTheme.extraColors.label,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
