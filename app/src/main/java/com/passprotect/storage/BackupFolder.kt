@@ -1,8 +1,11 @@
 package com.passprotect.storage
 
 import android.content.Context
+import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import androidx.documentfile.provider.DocumentFile
 import java.io.FileNotFoundException
+import java.io.IOException
 
 /** 備份資料夾裡的一個檔案。[lastModified] 給設定頁顯示「最後一次備份時間」。 */
 data class StoredFile(val name: String, val lastModified: Long)
@@ -34,8 +37,28 @@ class SafBackupFolder(
     override val displayName: String
         get() = directory.name.orEmpty()
 
-    override fun list(): List<StoredFile> =
-        directory.listFiles().mapNotNull { file -> file.name?.let { StoredFile(it, file.lastModified()) } }
+    /**
+     * 一次查詢列出整個資料夾。不用 `DocumentFile.listFiles()`：它查詢失敗（授權被撤銷、
+     * 資料夾被刪、SD 卡拔掉）時會吞掉例外、回傳空陣列，讀不到的資料夾就變成「沒有備份」，
+     * 「備份失敗」也就顯示不出來；而且它每個檔案還要再各查兩次名稱、時間。
+     */
+    override fun list(): List<StoredFile> {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(
+            directory.uri,
+            DocumentsContract.getDocumentId(directory.uri)
+        )
+        val columns = arrayOf(Document.COLUMN_DISPLAY_NAME, Document.COLUMN_LAST_MODIFIED)
+        val cursor = context.contentResolver.query(children, columns, null, null, null)
+            ?: throw IOException("讀不到備份資料夾")
+        return cursor.use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val name = c.getString(0) ?: continue
+                    add(StoredFile(name, if (c.isNull(1)) 0L else c.getLong(1)))
+                }
+            }
+        }
+    }
 
     override fun read(name: String): ByteArray {
         val file = directory.findFile(name) ?: throw FileNotFoundException("找不到 $name")

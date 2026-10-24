@@ -12,6 +12,8 @@ class FakeBackupFolder : BackupFolder {
     var failList = false
     /** 讀檔時順便做的事，例如模擬還原途中被上鎖。 */
     var onRead: () -> Unit = {}
+    /** 寫完一個檔之後順便做的事（拿到檔名）。 */
+    var onWrite: (String) -> Unit = {}
 
     override val displayName = "PassProtect 備份"
 
@@ -29,6 +31,7 @@ class FakeBackupFolder : BackupFolder {
         if (failWrites) throw java.io.IOException("寫不進去")
         files[name] = bytes
         modified[name] = ++clock
+        onWrite(name)
     }
 
     override fun delete(name: String) {

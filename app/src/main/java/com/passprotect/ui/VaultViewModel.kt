@@ -410,7 +410,7 @@ class VaultViewModel : ViewModel() {
                 )
             }
             // 今天還沒備份就備一份：只在電腦上改、同步過來的內容也備得到。
-            runBackup { LocalBackups.backupDaily(it, loaded.bytes, now().toLocalDate(), overwrite = false) }
+            runBackup { LocalBackups.backupDaily(it, loaded.bytes, now().toLocalDate(), overwrite = false, vaultFileName) }
         } catch (e: WrongPasswordException) {
             _uiState.update { it.copy(unlockError = UnlockError.WRONG_PASSWORD, isUnlocking = false) }
         } catch (e: UnsupportedVaultFormatException) {
@@ -511,7 +511,7 @@ class VaultViewModel : ViewModel() {
                         val entries = withContext(unlockDispatcher) { vault.entries() }
                         _uiState.update { it.copy(saveMessage = SaveMessage.Saved, entries = entries) }
                         // 今天那份跟著更新，所以每一份是那天最後的樣子。衝突時主檔沒寫入，不備份。
-                        runBackup { LocalBackups.backupDaily(it, bytes, now().toLocalDate(), overwrite = true) }
+                        runBackup { LocalBackups.backupDaily(it, bytes, now().toLocalDate(), overwrite = true, vaultFileName) }
                     }
                     is SaveResult.Conflict -> {
                         val entries = withContext(unlockDispatcher) { vault.entries() }
@@ -597,13 +597,13 @@ class VaultViewModel : ViewModel() {
     fun backupNow() {
         val repo = repository ?: return
         viewModelScope.launch {
-            runBackup { LocalBackups.backupDaily(it, repo.load().bytes, now().toLocalDate(), overwrite = true) }
+            runBackup { LocalBackups.backupDaily(it, repo.load().bytes, now().toLocalDate(), overwrite = true, vaultFileName) }
         }
     }
 
     /** 設定頁打開時重讀資料夾，顯示最後一次備份時間與還原清單。 */
     fun refreshBackups() {
-        viewModelScope.launch { runBackup {} }
+        viewModelScope.launch { runBackup { false } }
     }
 
     /**
@@ -623,44 +623,57 @@ class VaultViewModel : ViewModel() {
         _uiState.update { it.copy(restoreState = RestoreState.Restoring) }
         viewModelScope.launch {
             try {
-                val bytes = withContext(unlockDispatcher) { folder.read(name) }
-                val vault = try {
-                    withContext(unlockDispatcher) { Vault.open(bytes, password) }
+                // 記錄也在寫回之前解好：寫回主檔之後到換 session 之間不能有任何暫停，
+                // 否則中途上鎖（關螢幕、自動上鎖）會被這裡又解開。
+                val restored = try {
+                    withContext(unlockDispatcher) {
+                        val bytes = folder.read(name)
+                        val vault = Vault.open(bytes, password)
+                        RestoredBackup(bytes, vault, vault.entries(), vault.hintSnippets())
+                    }
                 } catch (e: WrongPasswordException) {
                     _uiState.update { it.copy(restoreState = RestoreState.WrongPassword) }
                     return@launch
                 }
-                persistMutex.withLock {
-                    val stamp = loadedStamp
-                    if (uiState.value.lockState != LockState.Unlocked || stamp == null) {
-                        _uiState.update { it.copy(restoreState = RestoreState.Failed) }
-                        return@withLock
-                    }
+                val restoredFile = persistMutex.withLock {
+                    if (!stillUnlocked()) return@withLock false
                     // 沒有退路就不蓋：這一步失敗會丟例外，落到下面的 catch，主檔沒動。
-                    withContext(unlockDispatcher) { LocalBackups.backupBeforeRestore(folder, repo.load().bytes, now()) }
-                    when (val result = withContext(unlockDispatcher) { repo.save(bytes, stamp) }) {
+                    withContext(unlockDispatcher) {
+                        LocalBackups.backupBeforeRestore(folder, repo.load().bytes, now(), vaultFileName)
+                    }
+                    val stamp = loadedStamp
+                    // 寫回前再確認一次：「還原前」那份可能要寫好一陣子，這段期間被鎖就不寫。
+                    if (!stillUnlocked() || stamp == null) return@withLock false
+                    when (val result = withContext(unlockDispatcher) { repo.save(restored.bytes, stamp) }) {
                         is SaveResult.Saved -> {
                             loadedStamp = result.newStamp
-                            if (uiState.value.lockState != LockState.Unlocked) {
-                                _uiState.update { it.copy(restoreState = RestoreState.Failed) }
-                                return@withLock
-                            }
+                            // 從這裡到換好 session 都不暫停。寫入途中被鎖：主檔已經是備份的內容，
+                            // 下次用那份備份的主密碼解鎖；session 保持上鎖。
+                            if (!stillUnlocked()) return@withLock true
                             val passwordChanged = !password.contentEquals(masterPasswordCache)
-                            val (entries, hintSnippets) = withContext(unlockDispatcher) {
-                                vault.entries() to vault.hintSnippets()
-                            }
-                            session.unlock(vault)
+                            session.unlock(restored.vault)
                             cacheMasterPassword(password)
-                            _uiState.update { it.copy(entries = entries, hintSnippets = hintSnippets) }
-                            runBackup { LocalBackups.backupDaily(it, bytes, now().toLocalDate(), overwrite = true) }
+                            _uiState.update {
+                                it.copy(
+                                    entries = restored.entries,
+                                    hintSnippets = restored.hintSnippets,
+                                    restoreState = RestoreState.Done
+                                )
+                            }
                             if (passwordChanged && uiState.value.biometricEnabled && biometric != null) {
                                 enrollBiometric(biometric)
                             }
-                            _uiState.update { it.copy(restoreState = RestoreState.Done) }
+                            true
                         }
-                        is SaveResult.Conflict ->
+                        is SaveResult.Conflict -> {
                             _uiState.update { it.copy(restoreState = RestoreState.Conflict(result.conflictFileName)) }
+                            false
+                        }
                     }
+                }
+                // 每日備份放在鎖外面、換好 session 之後：慢的資料夾操作不擋下一次存檔。
+                if (restoredFile) {
+                    runBackup { LocalBackups.backupDaily(it, restored.bytes, now().toLocalDate(), overwrite = true, vaultFileName) }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -671,6 +684,20 @@ class VaultViewModel : ViewModel() {
             }
         }
     }
+
+    /** 還原途中被上鎖就收手：面板已經不在了，狀態回到 Idle（[resetToLockedState] 也是這樣）。 */
+    private fun stillUnlocked(): Boolean {
+        if (uiState.value.lockState == LockState.Unlocked) return true
+        _uiState.update { it.copy(restoreState = RestoreState.Idle) }
+        return false
+    }
+
+    private class RestoredBackup(
+        val bytes: ByteArray,
+        val vault: Vault,
+        val entries: List<Entry>,
+        val hintSnippets: List<String>
+    )
 
     fun clearRestoreState() {
         _uiState.update { it.copy(restoreState = RestoreState.Idle) }
@@ -686,23 +713,28 @@ class VaultViewModel : ViewModel() {
     }
 
     /**
-     * 對備份資料夾做一件事，再重讀清單。沒設資料夾就什麼都不做。任何失敗都只記成
-     * [VaultUiState.backupFailed]，絕不往外丟——備份不能讓解鎖或存檔失敗。
+     * 對備份資料夾做一件事（[block] 回傳有沒有真的寫入），再重讀清單。沒設資料夾就什麼都不做。
+     * 任何失敗都只記成 [VaultUiState.backupFailed]，絕不往外丟——備份不能讓解鎖或存檔失敗。
+     * 只有真的寫入成功才清掉失敗：打開設定頁重讀清單、或解鎖時今天那份已經在了，都不代表
+     * 備份恢復正常，不能把「備份失敗」藏起來。
      */
-    private suspend fun runBackup(block: (BackupFolder) -> Unit) {
+    private suspend fun runBackup(block: (BackupFolder) -> Boolean) {
         val folder = backupFolder ?: return
         try {
-            val backups = withContext(unlockDispatcher) {
-                block(folder)
-                LocalBackups.list(folder)
+            val (wrote, backups) = withContext(unlockDispatcher) {
+                block(folder) to LocalBackups.list(folder, vaultFileName)
             }
-            _uiState.update { it.copy(backups = backups, backupFailed = false) }
+            _uiState.update { if (wrote) it.copy(backups = backups, backupFailed = false) else it.copy(backups = backups) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             _uiState.update { it.copy(backupFailed = true) }
         }
     }
+
+    /** 目前資料庫檔的名字，備份規則永遠不把它當備份（見 [LocalBackups]）。 */
+    private val vaultFileName: String?
+        get() = file?.displayName
 
     /**
      * 若已啟用生體辨識，[biometric] 不可為 null——重新呼叫 `enroll()` 會用
@@ -776,7 +808,15 @@ class VaultViewModel : ViewModel() {
         session.lock()
         masterPasswordCache?.wipe()
         masterPasswordCache = null
-        _uiState.update { it.copy(lockState = LockState.Locked, entries = emptyList(), isUnlocking = false) }
+        // 上鎖後還原面板已經不在了；留著 Done／Failed 的話，下次打開面板會被它立刻關掉或標錯。
+        _uiState.update {
+            it.copy(
+                lockState = LockState.Locked,
+                entries = emptyList(),
+                isUnlocking = false,
+                restoreState = RestoreState.Idle
+            )
+        }
     }
 
     /** 解鎖成功後呼叫。先清舊快取再存新的一份——不留兩份明文密碼同時存在。 */

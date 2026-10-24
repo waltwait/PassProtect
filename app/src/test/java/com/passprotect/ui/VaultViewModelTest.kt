@@ -10,6 +10,8 @@ import com.passprotect.vault.Vault
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.UUID
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -30,14 +32,13 @@ class VaultViewModelTest {
     private fun pw(text: String = "correct horse") = text.toCharArray()
 
     /** JVM 上可用的最小假實作，繞過真正的 SAF。 */
-    private class FakeVaultFile(var content: ByteArray) : VaultFile {
+    private class FakeVaultFile(var content: ByteArray, override val displayName: String = "vault.kdbx") : VaultFile {
         /** 模擬「檔案在 session 中途被外部刪掉」——VaultRepository KDoc 記載的失敗模式。 */
         var failReads = false
         /** 模擬 SAF 建檔失敗（權限沒了、撞名…）。 */
         var failCreate = false
         var created = false
 
-        override val displayName = "vault.kdbx"
         override fun read(): ByteArray {
             if (failReads) throw java.io.FileNotFoundException("外部刪掉了")
             return content
@@ -792,6 +793,115 @@ class VaultViewModelTest {
         assertEquals(LockState.Locked, s.vm.uiState.value.lockState)
         assertTrue(s.vm.uiState.value.entries.isEmpty())
         assertArrayEquals(main, s.file.content)
-        assertEquals(RestoreState.Failed, s.vm.uiState.value.restoreState)
+        assertEquals(RestoreState.Idle, s.vm.uiState.value.restoreState)
+    }
+
+    // ---- 最終審查修正 ----
+
+    /** 每次切到背景執行緒前先跑 [beforeStep]（第幾次切換），用來在還原的任一步上鎖。 */
+    private class SteppingDispatcher(private val beforeStep: (Int) -> Unit) : CoroutineDispatcher() {
+        private var step = 0
+        override fun isDispatchNeeded(context: CoroutineContext) = true
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            beforeStep(++step)
+            block.run()
+        }
+    }
+
+    @Test
+    fun lockAtAnyStepOfRestoreKeepsTheSessionLocked() = runTest {
+        for (lockAt in 1..20) {
+            val backup = vaultWith("B")
+            val s = backupReady(vaultWith("A"))
+            s.folder!!.files[oldBackup] = backup
+            s.vm.unlockWithPassword(pw())
+            var locked = false
+            s.vm.setUnlockDispatcherForTest(SteppingDispatcher { step ->
+                if (step == lockAt) {
+                    locked = true
+                    s.vm.lock()
+                }
+            })
+
+            s.vm.restoreBackup(oldBackup, pw(), biometric = null)
+
+            val state = s.vm.uiState.value
+            if (!locked) {
+                // 還原在第 lockAt 次切換之前就做完了：前面每一步都試過了。
+                assertEquals(RestoreState.Done, state.restoreState)
+                break
+            }
+            assertEquals("lockAt=$lockAt", LockState.Locked, state.lockState)
+            assertTrue("lockAt=$lockAt", state.entries.isEmpty())
+            assertTrue("lockAt=$lockAt: session 不可被還原又解開", runCatching { s.vm.saveEntry(entry("x")) }.isFailure)
+            assertEquals("lockAt=$lockAt", RestoreState.Idle, state.restoreState)
+        }
+    }
+
+    @Test
+    fun lockBeforeTheWriteLeavesTheMainFileAlone() = runTest {
+        // 「還原前」那份寫完、寫回主檔之前被上鎖：主檔不能被換掉。
+        val main = vaultWith("A")
+        val s = backupReady(main)
+        val folder = s.folder!!
+        folder.files[oldBackup] = vaultWith("B")
+        s.vm.unlockWithPassword(pw())
+        folder.onWrite = { name -> if (name.endsWith("-before-restore.kdbx")) s.vm.lock() }
+
+        s.vm.restoreBackup(oldBackup, pw(), biometric = null)
+
+        assertArrayEquals(main, s.file.content)
+    }
+
+    @Test
+    fun refreshDoesNotHideAFailedBackup() = runTest {
+        val s = backupReady(Vault.create(fastKdf).serialize(pw()))
+        s.vm.unlockWithPassword(pw())
+        s.folder!!.failWrites = true
+        s.vm.saveEntry(entry("github.com"))
+        assertTrue(s.vm.uiState.value.backupFailed)
+
+        s.folder.failWrites = false
+        s.vm.refreshBackups()
+
+        assertTrue(s.vm.uiState.value.backupFailed)
+    }
+
+    @Test
+    fun unlockThatWritesNothingKeepsTheFailure() = runTest {
+        val s = backupReady(Vault.create(fastKdf).serialize(pw()))
+        s.vm.unlockWithPassword(pw())
+        s.folder!!.failWrites = true
+        s.vm.saveEntry(entry("github.com"))
+        s.vm.lock()
+
+        s.folder.failWrites = false
+        s.vm.unlockWithPassword(pw())  // 今天那份已經在了，這次解鎖沒有寫入
+
+        assertTrue(s.vm.uiState.value.backupFailed)
+    }
+
+    @Test
+    fun theVaultFileIsNeverPrunedEvenIfNamedLikeABackup() = runTest {
+        // 備份資料夾就是同步資料夾，主檔剛好叫 PassProtect-2026-09-01.kdbx（換手機復原時誤選了備份檔）。
+        val bytes = Vault.create(fastKdf).serialize(pw())
+        val vaultName = "PassProtect-2026-09-01.kdbx"
+        val file = FakeVaultFile(bytes, displayName = vaultName)
+        val folder = FakeBackupFolder().apply {
+            files[vaultName] = bytes
+            repeat(30) { files[com.passprotect.storage.LocalBackups.dailyName(java.time.LocalDate.of(2026, 9, 2).plusDays(it.toLong()))] = byteArrayOf(1) }
+        }
+        val vm = VaultViewModel().apply {
+            setRepositoryForTest(VaultRepository(file, FakeBackupStore()), FileStamp.of(bytes, file.lastModified()))
+            setFileAndBackupsForTest(file, FakeBackupStore())
+            setUnlockDispatcherForTest(Dispatchers.Unconfined)
+            setBackupFolderForTest(folder)
+            setClockForTest { backupDay }
+        }
+
+        vm.unlockWithPassword(pw())
+
+        assertTrue(vaultName in folder.files)
+        assertFalse(vm.uiState.value.backups.any { it.name == vaultName })
     }
 }

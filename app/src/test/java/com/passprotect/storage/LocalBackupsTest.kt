@@ -87,4 +87,27 @@ class LocalBackupsTest {
             LocalBackups.list(folder).map { it.name }
         )
     }
+
+    @Test
+    fun theVaultFileIsNeitherListedNorPruned() {
+        val folder = FakeBackupFolder()
+        val vault = "PassProtect-2026-09-01.kdbx"
+        folder.files[vault] = byteArrayOf(9)
+        repeat(31) {
+            LocalBackups.backupDaily(
+                folder, byteArrayOf(1), LocalDate.of(2026, 9, 2).plusDays(it.toLong()), overwrite = true, vaultFileName = vault
+            )
+        }
+        assertTrue(vault in folder.files)
+        assertFalse(LocalBackups.list(folder, vaultFileName = vault).any { it.name == vault })
+        assertEquals(30, LocalBackups.list(folder, vaultFileName = vault).size)
+    }
+
+    @Test
+    fun dailyBackupReportsWhetherItWrote() {
+        val folder = FakeBackupFolder()
+        val day = LocalDate.of(2026, 10, 24)
+        assertTrue(LocalBackups.backupDaily(folder, byteArrayOf(1), day, overwrite = false))
+        assertFalse(LocalBackups.backupDaily(folder, byteArrayOf(2), day, overwrite = false))
+    }
 }

@@ -57,7 +57,7 @@ sealed interface RestoreState {
     data object Restoring : RestoreState
     /** 輸入的主密碼解不開那份備份。什麼都沒動。 */
     data object WrongPassword : RestoreState
-    /** 讀不到備份、存不了「還原前」那份、或途中被上鎖。主檔沒動。 */
+    /** 讀不到備份、存不了「還原前」那份、或寫回時出錯。寫回之前出錯的話主檔沒動。 */
     data object Failed : RestoreState
     /** 主檔在這段期間被外部改過：備份內容另存成 [conflictFileName]，目前的資料庫沒換。 */
     data class Conflict(val conflictFileName: String) : RestoreState
