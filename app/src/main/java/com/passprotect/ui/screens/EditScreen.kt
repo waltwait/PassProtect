@@ -158,6 +158,24 @@ internal fun expandedAfterRemoval(ids: List<UUID>, removed: UUID, expanded: UUID
     return ids.getOrNull(index + 1) ?: ids[index - 1]
 }
 
+/**
+ * 在新增頁點了「已經有類似的」其中一筆：新增頁上已經打了字的帳號帶去那筆，一組都沒
+ * 打就帶一組空的，換過去才有一組可以直接填。
+ */
+internal fun accountsToCarry(fields: List<AccountDraft>): List<AccountDraft> =
+    fields.filter { it.username.isNotBlank() || it.hint.isNotBlank() }
+        .ifEmpty { listOf(AccountDraft(UUID.randomUUID(), "", "")) }
+
+/** 編輯頁一開始的帳號：既有那筆的帳號，後面接上從新增頁帶過來的；都沒有就給一組空的。 */
+internal fun initialAccountDrafts(existing: Entry?, added: List<AccountDraft>): List<AccountDraft> =
+    (existing?.accounts.orEmpty().map { AccountDraft(it.id, it.username, it.hint) } + added)
+        .ifEmpty { listOf(AccountDraft(UUID.randomUUID(), "", "")) }
+
+// 從新增頁換到既有那筆時，帶過去的帳號經目的地的 SavedStateHandle 交過去（跟
+// WEB_SEARCH_RESULT_KEY 同一種做法），編輯頁一組起來就移除。
+private const val CARRIED_USERNAMES_KEY = "carried_usernames"
+private const val CARRIED_HINTS_KEY = "carried_hints"
+
 /** [EditScreen] 裡一組帳號欄位的可變狀態——`username`/`hint` 各自獨立可觀察，改其中一個不會重組整個列表。 */
 private class AccountFieldState(val id: UUID, initialUsername: String, initialHint: String) {
     var username by mutableStateOf(initialUsername)
@@ -187,10 +205,20 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     var title by rememberSaveable { mutableStateOf(existing?.title.orEmpty()) }
     var url by rememberSaveable { mutableStateOf(existing?.url.orEmpty()) }
     var category by rememberSaveable { mutableStateOf(existing?.category.orEmpty()) }
+    val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
+    val carried = remember {
+        val usernames = savedStateHandle?.get<ArrayList<String>>(CARRIED_USERNAMES_KEY).orEmpty()
+        val hints = savedStateHandle?.get<ArrayList<String>>(CARRIED_HINTS_KEY).orEmpty()
+        usernames.zip(hints) { username, hint -> AccountDraft(UUID.randomUUID(), username, hint) }
+    }
+    LaunchedEffect(Unit) {
+        savedStateHandle?.remove<ArrayList<String>>(CARRIED_USERNAMES_KEY)
+        savedStateHandle?.remove<ArrayList<String>>(CARRIED_HINTS_KEY)
+    }
     val accountFields = rememberSaveable(saver = AccountFieldsSaver) {
-        val initial = existing?.accounts?.takeIf { it.isNotEmpty() }
-            ?: listOf(Account(id = UUID.randomUUID(), hint = ""))
-        initial.map { AccountFieldState(it.id, it.username, it.hint) }.toMutableStateList()
+        initialAccountDrafts(existing, carried)
+            .map { AccountFieldState(it.id, it.username, it.hint) }
+            .toMutableStateList()
     }
     val uiState by viewModel.uiState.collectAsState()
     var didAttemptSave by rememberSaveable { mutableStateOf(false) }
@@ -200,7 +228,9 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     // 同一時間只展開一組帳號（規格 §4.4），其他組收成一列摘要——這是編輯畫面縮短到
     // 一屏的關鍵。存成字串交給 rememberSaveable，理由同上面 AccountFieldsSaver：
     // 去網址搜尋再回來時，展開的是哪一組不能被重置回第一組。
-    var expandedId by rememberSaveable { mutableStateOf(accountFields.first().id.toString()) }
+    var expandedId by rememberSaveable {
+        mutableStateOf((carried.firstOrNull()?.id ?: accountFields.first().id).toString())
+    }
     val expanded = accountFields.firstOrNull { it.id.toString() == expandedId } ?: accountFields.first()
     var pickingCategory by rememberSaveable { mutableStateOf(false) }
 
@@ -231,7 +261,6 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
     // Navigation Compose「畫面 B 把結果交回畫面 A」的標準做法，不需要另外
     // 設計一個跨畫面共用的暫存狀態。撿到就馬上從 SavedStateHandle 移除，
     // 避免使用者之後隨便切一次頁又撿到同一個舊值。
-    val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
     val pickedUrl = savedStateHandle
         ?.getStateFlow<String?>(WEB_SEARCH_RESULT_KEY, null)
         ?.collectAsState()
@@ -310,6 +339,22 @@ fun EditScreen(entryId: UUID?, entries: List<Entry>, navController: NavControlle
                 onValueChange = { title = it },
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp)
             )
+            if (entryId == null) {
+                val similar = remember(title, entries) { similarEntries(title, entries) }
+                SimilarEntriesPanel(
+                    similar,
+                    onPick = { picked ->
+                        // 這筆新增不存，換成在既有那筆加帳號；新增頁從返回堆疊拿掉，存完直接回首頁。
+                        val carry = accountsToCarry(accountFields.map { AccountDraft(it.id, it.username, it.hint) })
+                        navController.navigate("edit/${picked.id}") { popUpTo("edit_new") { inclusive = true } }
+                        navController.currentBackStackEntry?.savedStateHandle?.apply {
+                            set(CARRIED_USERNAMES_KEY, ArrayList(carry.map { it.username }))
+                            set(CARRIED_HINTS_KEY, ArrayList(carry.map { it.hint }))
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp)) {
                 GroupedRow(GroupPosition.First, onClick = { pickingCategory = true }) {
                     Icon(
